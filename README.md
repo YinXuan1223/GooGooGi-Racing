@@ -1,6 +1,7 @@
 ## 前置準備
 - Git： 確保電腦有安裝 Git。
 - 虛擬環境： 推薦使用 Conda 來管理專案的 Python 環境。
+- Android Studio: 確保電腦有安裝 Android Studio。
 
 
 ## 環境建置
@@ -18,16 +19,16 @@
     ```
     conda activate GooGooGi
     ```
+    
+- 先進到 backend 資料夾，再安裝 python 需要的套件
+    ```
+    cd backend
+    pip install -r requirements.txt
+    ```
 - 如果想要關掉虛擬環境的話，執行以下指令((執行完後你的terminal prompt 前面會出現(base)))
     ```
     conda deactivate
     ```
-
-- 安裝 python 需要的套件
-    ```
-    pip install -r requirements.txt
-    ```
-
 - 設定環境變數
 為了安全起見，我們將 API 金鑰儲存在環境變數中，而不是直接寫在程式碼裡。
 請在專案根目錄下建立一個 .env 檔案，並填入 google API key (在 line 群組)。
