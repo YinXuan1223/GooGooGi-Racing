@@ -6,22 +6,22 @@
     android:orientation="vertical"
     android:padding="16dp">
 
-    <EditText
-        android:id="@+id/etMessage"
-        android:layout_width="match_parent"
+    <Button
+        android:id="@+id/btnRecord"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:hint="Enter a message" />
+        android:text="Start/Stop Recording" />
 
     <Button
-        android:id="@+id/btnCallApi"
+        android:id="@+id/btnSend"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="Send to Python" />
 
     <TextView
-        android:id="@+id/tvResult"
+        android:id="@+id/tvStatus"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Response will appear here"
+        android:text="Status..."
         android:paddingTop="20dp"/>
 </LinearLayout>
