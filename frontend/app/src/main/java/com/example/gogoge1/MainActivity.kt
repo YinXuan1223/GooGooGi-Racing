@@ -2,13 +2,16 @@ package com.example.gogoge1
 
 import android.os.Bundle
 import android.widget.Button
+import android.widget.EditText
 import android.widget.TextView
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import okhttp3.*
+import org.json.JSONObject
 import java.io.IOException
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 
 class MainActivity : AppCompatActivity() {
     private val client = OkHttpClient()
@@ -18,7 +21,6 @@ class MainActivity : AppCompatActivity() {
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
 
-        // 保持 edge-to-edge 功能
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
@@ -26,17 +28,28 @@ class MainActivity : AppCompatActivity() {
         }
 
         val btn = findViewById<Button>(R.id.btnCallApi)
+        val etMessage = findViewById<EditText>(R.id.etMessage)
         val tvResult = findViewById<TextView>(R.id.tvResult)
 
         btn.setOnClickListener {
-            callApi(tvResult)
+            val msg = etMessage.text.toString()
+            callApi(msg, tvResult)
         }
     }
 
-    private fun callApi(tvResult: TextView) {
-        // 測試 URL：可以換成你的 Cloud Run API
+    private fun callApi(message: String, tvResult: TextView) {
+        val json = JSONObject()
+        json.put("message", message)
+
+        val body = RequestBody.create(
+            "application/json; charset=utf-8".toMediaTypeOrNull(),
+            json.toString()
+        )
+
+        // ⚠️ 注意：在 Android 模擬器要用 10.0.2.2 替代 localhost
         val request = Request.Builder()
-            .url("https://httpbin.org/get")
+            .url("http://10.0.2.2:5000/echo")
+            .post(body)
             .build()
 
         client.newCall(request).enqueue(object : Callback {
