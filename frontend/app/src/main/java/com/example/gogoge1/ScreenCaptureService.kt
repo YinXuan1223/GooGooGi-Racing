@@ -1,7 +1,6 @@
 package com.example.gogoge1
 
 import android.app.*
-import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -15,7 +14,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import android.provider.MediaStore
+import android.util.Log
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.Dispatchers
@@ -25,10 +24,11 @@ import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.ByteArrayOutputStream
-import java.io.IOException
+import java.nio.ByteBuffer
 
 class ScreenCaptureService : Service() {
 
+    // ... (其他變數和 companion object 保持不變) ...
     private lateinit var mediaProjectionManager: MediaProjectionManager
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
@@ -37,16 +37,16 @@ class ScreenCaptureService : Service() {
 
     private var isCapturing = false
     private val captureInterval = 5000L
+    private var lastScreenHash: Int? = null
 
     private val captureRunnable = object : Runnable {
         override fun run() {
             if (isCapturing) {
-                captureAndUpload() // 執行擷取與上傳
+                captureAndProcessScreen()
                 handler.postDelayed(this, captureInterval)
             }
         }
     }
-
     companion object {
         const val EXTRA_RESULT_CODE = "RESULT_CODE"
         const val EXTRA_RESULT_DATA = "RESULT_DATA"
@@ -62,6 +62,7 @@ class ScreenCaptureService : Service() {
         mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
     }
 
+    // onStartCommand, start/stopContinuousCapture, setupVirtualDisplay 等函式保持不變...
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START_CONTINUOUS_CAPTURE -> {
@@ -87,9 +88,7 @@ class ScreenCaptureService : Service() {
             mediaProjection = mediaProjectionManager.getMediaProjection(resultCode, resultData)
             mediaProjection?.registerCallback(object : MediaProjection.Callback() {
                 override fun onStop() {
-                    if (isCapturing) {
-                        stopContinuousCapture()
-                    }
+                    if (isCapturing) stopContinuousCapture()
                     super.onStop()
                 }
             }, handler)
@@ -98,7 +97,6 @@ class ScreenCaptureService : Service() {
 
         return START_NOT_STICKY
     }
-
     private fun startContinuousCapture() {
         if (!isCapturing && mediaProjection != null) {
             isCapturing = true
@@ -119,17 +117,12 @@ class ScreenCaptureService : Service() {
 
     private fun setupVirtualDisplay() {
         val displayMetrics = resources.displayMetrics
-        val screenWidth = displayMetrics.widthPixels
-        val screenHeight = displayMetrics.heightPixels
-        val screenDensity = displayMetrics.densityDpi
-
-        imageReader = ImageReader.newInstance(screenWidth, screenHeight, PixelFormat.RGBA_8888, 2)
-
+        imageReader = ImageReader.newInstance(displayMetrics.widthPixels, displayMetrics.heightPixels, PixelFormat.RGBA_8888, 2)
         virtualDisplay = mediaProjection?.createVirtualDisplay(
             "ScreenCapture",
-            screenWidth,
-            screenHeight,
-            screenDensity,
+            displayMetrics.widthPixels,
+            displayMetrics.heightPixels,
+            displayMetrics.densityDpi,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
             imageReader?.surface,
             null,
@@ -137,78 +130,109 @@ class ScreenCaptureService : Service() {
         )
     }
 
-    private fun captureAndUpload() {
+    private fun captureAndProcessScreen() {
         val image = imageReader?.acquireLatestImage() ?: return
         try {
+            // ... (Bitmap 建立邏輯不變) ...
             val planes = image.planes
             val buffer = planes[0].buffer
             val pixelStride = planes[0].pixelStride
             val rowStride = planes[0].rowStride
             val rowPadding = rowStride - pixelStride * image.width
-
             val bitmapWidth = image.width + rowPadding / pixelStride
-            if (bitmapWidth <= 0 || image.height <= 0) {
-                return
-            }
+
+            if (bitmapWidth <= 0 || image.height <= 0) return
 
             val bitmap = Bitmap.createBitmap(bitmapWidth, image.height, Bitmap.Config.ARGB_8888)
             bitmap.copyPixelsFromBuffer(buffer)
-
             val finalBitmap = Bitmap.createBitmap(bitmap, 0, 0, resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
 
-            // 將處理好的 Bitmap 發送到後端
-            sendBitmapToApi(finalBitmap)
-            // 如果您還想同時儲存到相簿，可以取消下面這行的註解
-            // saveBitmapToGallery(finalBitmap)
+            // 這裡的邏輯不變
+            val newHash = generateScreenHash(finalBitmap)
 
+            if (lastScreenHash == null || newHash != lastScreenHash) {
+                Log.d("ScreenChange", "✅ [CHANGE DETECTED] 畫面已發生變更！準備上傳...")
+                sendBitmapToApi(finalBitmap)
+            } else {
+                Log.d("ScreenChange", "⚪️ [NO CHANGE] 畫面無變化，本次不執行上傳。")
+            }
+            lastScreenHash = newHash
         } catch (e: Exception) {
             e.printStackTrace()
         } finally {
-            // 確保 image 物件一定會被關閉，避免資源洩漏
             image.close()
         }
     }
 
+    /**
+     * ✅ 修改：產生 Bitmap 的指紋前，先裁切掉狀態欄
+     */
+    private fun generateScreenHash(bitmap: Bitmap): Int {
+        val statusBarHeight = getStatusBarHeight()
+        // 檢查是否有足夠的高度可以裁切
+        if (bitmap.height <= statusBarHeight) {
+            return bitmap.hashCode() // 如果高度不夠，回傳原始 hash
+        }
+
+        // 1. 裁切掉狀態欄，只保留 App 內容區域
+        val contentBitmap = Bitmap.createBitmap(
+            bitmap,
+            0,
+            statusBarHeight,
+            bitmap.width,
+            bitmap.height - statusBarHeight
+        )
+
+        // 2. 為了效能和忽略微小差異，將「裁切後」的圖片縮小
+        val scaledBitmap = Bitmap.createScaledBitmap(contentBitmap, 64, 128, true)
+
+        // 3. 取得縮小後圖片的像素資料
+        val byteBuffer = ByteBuffer.allocate(scaledBitmap.byteCount)
+        scaledBitmap.copyPixelsToBuffer(byteBuffer)
+
+        // 4. 計算並回傳一個簡單的雜湊碼作為指紋
+        return byteBuffer.array().contentHashCode()
+    }
+
+
+    private fun getStatusBarHeight(): Int {
+        val resourceId = resources.getIdentifier("status_bar_height", "dimen", "android")
+        return if (resourceId > 0) {
+            resources.getDimensionPixelSize(resourceId)
+        } else {
+            // 提供一個合理的預設值
+            (24 * resources.displayMetrics.density).toInt()
+        }
+    }
+
+    // sendBitmapToApi 和 通知相關的函式保持不變...
     private fun sendBitmapToApi(bitmap: Bitmap) {
         GlobalScope.launch(Dispatchers.IO) {
             try {
                 val baos = ByteArrayOutputStream()
-                bitmap.compress(Bitmap.CompressFormat.PNG, 90, baos) // 品質設為90以稍微減小檔案大小
+                bitmap.compress(Bitmap.CompressFormat.PNG, 90, baos)
                 val bitmapBytes = baos.toByteArray()
-
                 val client = OkHttpClient()
-                // 模擬器請用 10.0.2.2，實體手機請換成您電腦的IP
                 val url = "http://10.0.2.2:5000/upload"
 
                 val requestBody = MultipartBody.Builder()
                     .setType(MultipartBody.FORM)
-                    .addFormDataPart(
-                        "screenshot_file",
-                        "screenshot.png",
-                        bitmapBytes.toRequestBody("image/png".toMediaType())
-                    )
+                    .addFormDataPart("screenshot_file", "screenshot.png", bitmapBytes.toRequestBody("image/png".toMediaType()))
                     .build()
 
                 val request = Request.Builder().url(url).post(requestBody).build()
                 val response = client.newCall(request).execute()
 
                 if (response.isSuccessful) {
-                    println("上傳成功: Server response: ${response.body?.string()}")
+                    Log.d("ScreenUpload", "🚀 [UPLOAD SUCCESS] Server response: ${response.body?.string()}")
                 } else {
-                    println("上傳失敗: ${response.code} ${response.message}")
+                    Log.w("ScreenUpload", "❌ [UPLOAD FAILED] ${response.code} ${response.message}")
                 }
             } catch (e: Exception) {
-                println("上傳時發生錯誤: ${e.message}")
-                e.printStackTrace()
+                Log.e("ScreenUpload", "❗️ [UPLOAD ERROR]", e)
             }
         }
     }
-
-    // (可選) 儲存到相簿的函式
-    private fun saveBitmapToGallery(bitmap: Bitmap) {
-        // ... 此函式內容不變 ...
-    }
-
 
     private fun startForegroundWithNotification() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -217,7 +241,6 @@ class ScreenCaptureService : Service() {
         }
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("螢幕擷取服務已啟動")
-            .setContentText("準備開始連續截圖...")
             .setSmallIcon(R.mipmap.ic_launcher)
             .build()
         startForeground(NOTIFICATION_ID, notification)
@@ -230,7 +253,7 @@ class ScreenCaptureService : Service() {
         val actionIntent: PendingIntent
 
         if (isCapturing) {
-            contentText = "每5秒擷取一次畫面中..."
+            contentText = "每5秒偵測一次畫面中..."
             actionTitle = "暫停"
             val stopIntent = Intent(this, ScreenCaptureService::class.java).apply { action = ACTION_STOP_CONTINUOUS_CAPTURE }
             actionIntent = PendingIntent.getService(this, 1, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -265,4 +288,3 @@ class ScreenCaptureService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 }
-
