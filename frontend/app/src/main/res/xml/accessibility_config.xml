@@ -1,12 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 這個檔案放的是一些 accessibility service 需要的 config(預設值的概念)，@string/as_config_description 是從 string.xml 取來的 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:description="@string/as_config_description"
-    android:accessibilityEventTypes="typeAllMask"
-    android:packageNames=""
-    android:accessibilityFeedbackType="feedbackSpoken"
+    android:description="@string/accessibility_service_description"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewClicked|typeViewFocused|typeViewTextChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
     android:notificationTimeout="100"
     android:canRetrieveWindowContent="true"
-    android:settingsActivity=""
-    android:accessibilityFlags="flagDefault" />
-
+    android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"/>

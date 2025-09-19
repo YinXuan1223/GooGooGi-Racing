@@ -3,4 +3,6 @@
     <string name="as_in_android_manifest">as in android manifest</string>
     <string name="as_config_description">as config description</string>
     <string name="a_robot_image">a robot image</string>
+    <string name="accessibility_service_description">Collect UI nodes and send to test server</string>
+
 </resources>

@@ -30,11 +30,9 @@
         </activity>
 
         <service
-            android:name=".MyAccessibilityService"
+            android:name="com.example.gogoge1.UiCollectorAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            android:label="@string/as_in_android_manifest"
-            android:enabled="true"
-            android:exported="true">
+            android:exported="false">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
             </intent-filter>
