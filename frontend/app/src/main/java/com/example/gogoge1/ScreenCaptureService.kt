@@ -15,6 +15,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
+import android.provider.MediaStore
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.Dispatchers
@@ -25,10 +26,10 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
+import java.io.IOException
 
 class ScreenCaptureService : Service() {
 
-    // ... (其他變數和 companion object 保持不變) ...
     private lateinit var mediaProjectionManager: MediaProjectionManager
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
@@ -62,7 +63,6 @@ class ScreenCaptureService : Service() {
         mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
     }
 
-    // onStartCommand, start/stopContinuousCapture, setupVirtualDisplay 等函式保持不變...
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START_CONTINUOUS_CAPTURE -> {
@@ -133,7 +133,6 @@ class ScreenCaptureService : Service() {
     private fun captureAndProcessScreen() {
         val image = imageReader?.acquireLatestImage() ?: return
         try {
-            // ... (Bitmap 建立邏輯不變) ...
             val planes = image.planes
             val buffer = planes[0].buffer
             val pixelStride = planes[0].pixelStride
