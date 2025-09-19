@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- 這是模擬器指向電腦的特殊 IP -->
+        <domain includeSubdomains="true">10.0.2.2</domain>
+        <!--
+            如果使用實體手機，您需要將您電腦的區域網路 IP 加到這裡
+            例如：<domain includeSubdomains="true">192.168.1.10</domain>
+        -->
+    </domain-config>
+</network-security-config>
