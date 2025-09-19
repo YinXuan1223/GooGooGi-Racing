@@ -9,17 +9,9 @@
     tools:context=".MainActivity">
 
     <Button
-        android:id="@+id/btn_start_service"
+        android:id="@+id/btn_control_capture"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="啟動/停止分享螢幕畫面" />
-
-    <Button
-        android:id="@+id/btn_toggle_capture"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:enabled="false"
-        android:text="開始/暫停連續截圖" />
+        android:text="啟動並開始截圖" />
 
 </LinearLayout>

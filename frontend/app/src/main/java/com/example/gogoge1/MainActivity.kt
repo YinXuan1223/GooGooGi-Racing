@@ -6,8 +6,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.util.Log
 import android.widget.Button
 import android.widget.Toast
@@ -15,16 +17,13 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.net.toUri
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var mediaProjectionManager: MediaProjectionManager
+    private lateinit var btnControlCapture: Button
 
-    private lateinit var btnStartService: Button
-    private lateinit var btnToggleCapture: Button
-    private var isCapturing = false
-
-    // --- 新增：用來追蹤服務是否正在運行的狀態旗標 ---
     private var isServiceRunning = false
 
     // 用於接收「螢幕擷取」權限結果的 Launcher
@@ -35,18 +34,27 @@ class MainActivity : AppCompatActivity() {
             Log.d("ScreenCaptureDebug", "螢幕擷取權限已授予")
             val data: Intent? = result.data
             if (data != null) {
+                // 1. 啟動前景服務，傳入權限資料
                 val serviceIntent = Intent(this, ScreenCaptureService::class.java).apply {
                     putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, result.resultCode)
                     putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, data)
                 }
                 ContextCompat.startForegroundService(this, serviceIntent)
 
-                // --- 修改：更新服務狀態並刷新UI ---
+                // 2. 立刻發送「開始連續截圖」的指令
+                val startCaptureIntent = Intent(this, ScreenCaptureService::class.java).apply {
+                    action = ScreenCaptureService.ACTION_START_CONTINUOUS_CAPTURE
+                }
+                startService(startCaptureIntent)
+
+                // 3. 更新 UI 狀態
                 isServiceRunning = true
                 updateUiState()
             }
         } else {
             Log.w("ScreenCaptureDebug", "螢幕擷取權限被拒絕")
+            isServiceRunning = false // 確保狀態正確
+            updateUiState()
             Toast.makeText(this, "需要螢幕擷取權限才能運作", Toast.LENGTH_SHORT).show()
         }
     }
@@ -56,12 +64,24 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
-            Log.d("ScreenCaptureDebug", "通知權限已授予，準備請求螢幕擷取")
             requestMediaProjection()
         } else {
-            Log.w("ScreenCaptureDebug", "通知權限被拒絕")
             Toast.makeText(this, "需要通知權限以顯示服務狀態", Toast.LENGTH_SHORT).show()
             requestMediaProjection()
+        }
+    }
+
+    // 用於接收「懸浮窗」權限結果的 Launcher
+    private val overlayPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        // 當使用者從設定頁面回來後
+        if (Settings.canDrawOverlays(this)) {
+            Log.d("OverlayPermission", "懸浮窗權限已授予")
+            startService(Intent(this, FloatingService::class.java))
+        } else {
+            Log.w("OverlayPermission", "懸浮窗權限被拒絕")
+            Toast.makeText(this, "需要懸浮窗權限才能顯示浮動按鈕", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -69,65 +89,52 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        btnStartService = findViewById(R.id.btn_start_service)
-        btnToggleCapture = findViewById(R.id.btn_toggle_capture)
-
+        btnControlCapture = findViewById(R.id.btn_control_capture)
         mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
 
-        // --- 修改：「啟動/停止服務」按鈕的點擊事件 ---
-        btnStartService.setOnClickListener {
+        // 呼叫懸浮窗權限檢查
+        requestOverlayPermission()
+
+        // ✅ 修正後的單一按鈕點擊事件，純粹的開/關邏輯
+        btnControlCapture.setOnClickListener {
             if (isServiceRunning) {
-                // 如果服務正在運行，就發送停止服務的指令
-                stopScreenCaptureService()
+                // 情況 1: 服務正在運行 -> 發送停止服務的指令
+                val stopIntent = Intent(this, ScreenCaptureService::class.java).apply {
+                    action = ScreenCaptureService.ACTION_STOP_SERVICE
+                }
+                startService(stopIntent)
+                isServiceRunning = false
+                updateUiState()
+                Toast.makeText(this, "已停止分享與截圖", Toast.LENGTH_SHORT).show()
             } else {
-                // 如果服務未運行，就開始權限請求流程
+                // 情況 2: 服務未運行 -> 走權限申請流程
                 requestNotificationPermission()
             }
         }
-
-        btnToggleCapture.setOnClickListener {
-            val action = if (isCapturing) {
-                ScreenCaptureService.ACTION_STOP_CONTINUOUS_CAPTURE
-            } else {
-                ScreenCaptureService.ACTION_START_CONTINUOUS_CAPTURE
-            }
-            val intent = Intent(this, ScreenCaptureService::class.java).apply { this.action = action }
-            startService(intent)
-            isCapturing = !isCapturing
-            updateButtonText()
-        }
-
-        // --- 新增：初始化UI狀態 ---
         updateUiState()
     }
 
-    // --- 新增：停止服務的函式 ---
-    private fun stopScreenCaptureService() {
-        Log.d("ScreenCaptureDebug", "發送停止服務的指令...")
-        val intent = Intent(this, ScreenCaptureService::class.java).apply {
-            action = ScreenCaptureService.ACTION_STOP_SERVICE
-        }
-        startService(intent)
-
-        // 更新服務狀態並刷新UI
-        isServiceRunning = false
-        updateUiState()
-    }
-
-    // --- 新增：一個統一管理UI狀態的函式 ---
-    private fun updateUiState() {
-        if (isServiceRunning) {
-            btnStartService.text = "停止截圖服務"
-            btnToggleCapture.isEnabled = true
+    // 請求懸浮窗權限的函式
+    private fun requestOverlayPermission() {
+        if (!Settings.canDrawOverlays(this)) {
+            // 跳轉到授權頁面
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                "package:$packageName".toUri()
+            )
+            overlayPermissionLauncher.launch(intent)
         } else {
-            btnStartService.text = "啟動截圖服務"
-            btnToggleCapture.isEnabled = false
-            // 當服務停止時，重置連續截圖的狀態和按鈕文字
-            isCapturing = false
-            updateButtonText()
+            // 已授權，直接啟動浮動球
+            startService(Intent(this, FloatingService::class.java))
         }
     }
 
+
+    private fun updateUiState() {
+        btnControlCapture.text = if (isServiceRunning) "停止分享與截圖" else "啟動分享與截圖"
+    }
+
+    // 權限請求相關函式保持不變
     private fun requestNotificationPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
@@ -143,9 +150,5 @@ class MainActivity : AppCompatActivity() {
     private fun requestMediaProjection() {
         val captureIntent = mediaProjectionManager.createScreenCaptureIntent()
         screenCaptureLauncher.launch(captureIntent)
-    }
-
-    private fun updateButtonText() {
-        btnToggleCapture.text = if (isCapturing) "暫停連續截圖" else "開始連續截圖"
     }
 }

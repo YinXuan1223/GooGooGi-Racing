@@ -15,7 +15,6 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
-import android.provider.MediaStore
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.Dispatchers
@@ -26,7 +25,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
-import java.io.IOException
 
 class ScreenCaptureService : Service() {
 
@@ -36,13 +34,13 @@ class ScreenCaptureService : Service() {
     private var imageReader: ImageReader? = null
     private val handler = Handler(Looper.getMainLooper())
 
-    private var isCapturing = false
+    private var isServiceRunning = false
     private val captureInterval = 5000L
     private var lastScreenHash: Int? = null
 
     private val captureRunnable = object : Runnable {
         override fun run() {
-            if (isCapturing) {
+            if (isServiceRunning) {
                 captureAndProcessScreen()
                 handler.postDelayed(this, captureInterval)
             }
@@ -54,7 +52,6 @@ class ScreenCaptureService : Service() {
         private const val NOTIFICATION_ID = 123
         private const val CHANNEL_ID = "ScreenCapture"
         const val ACTION_START_CONTINUOUS_CAPTURE = "ACTION_START_CONTINUOUS_CAPTURE"
-        const val ACTION_STOP_CONTINUOUS_CAPTURE = "ACTION_STOP_CONTINUOUS_CAPTURE"
         const val ACTION_STOP_SERVICE = "ACTION_STOP_SERVICE"
     }
 
@@ -67,10 +64,6 @@ class ScreenCaptureService : Service() {
         when (intent?.action) {
             ACTION_START_CONTINUOUS_CAPTURE -> {
                 startContinuousCapture()
-                return START_NOT_STICKY
-            }
-            ACTION_STOP_CONTINUOUS_CAPTURE -> {
-                stopContinuousCapture()
                 return START_NOT_STICKY
             }
             ACTION_STOP_SERVICE -> {
@@ -88,7 +81,7 @@ class ScreenCaptureService : Service() {
             mediaProjection = mediaProjectionManager.getMediaProjection(resultCode, resultData)
             mediaProjection?.registerCallback(object : MediaProjection.Callback() {
                 override fun onStop() {
-                    if (isCapturing) stopContinuousCapture()
+                    stopSelf()
                     super.onStop()
                 }
             }, handler)
@@ -98,20 +91,11 @@ class ScreenCaptureService : Service() {
         return START_NOT_STICKY
     }
     private fun startContinuousCapture() {
-        if (!isCapturing && mediaProjection != null) {
-            isCapturing = true
+        if (!isServiceRunning && mediaProjection != null) {
+            isServiceRunning = true
             handler.post(captureRunnable)
             updateNotification()
             handler.post { Toast.makeText(this, "已開始連續截圖", Toast.LENGTH_SHORT).show() }
-        }
-    }
-
-    private fun stopContinuousCapture() {
-        if (isCapturing) {
-            isCapturing = false
-            handler.removeCallbacks(captureRunnable)
-            updateNotification()
-            handler.post { Toast.makeText(this, "已暫停連續截圖", Toast.LENGTH_SHORT).show() }
         }
     }
 
@@ -183,7 +167,7 @@ class ScreenCaptureService : Service() {
         )
 
         // 2. 為了效能和忽略微小差異，將「裁切後」的圖片縮小
-        val scaledBitmap = Bitmap.createScaledBitmap(contentBitmap, 64, 128, true)
+        val scaledBitmap = Bitmap.createScaledBitmap(contentBitmap, 32, 64, true)
 
         // 3. 取得縮小後圖片的像素資料
         val byteBuffer = ByteBuffer.allocate(scaledBitmap.byteCount)
@@ -223,12 +207,12 @@ class ScreenCaptureService : Service() {
                 val response = client.newCall(request).execute()
 
                 if (response.isSuccessful) {
-                    Log.d("ScreenUpload", "🚀 [UPLOAD SUCCESS] Server response: ${response.body?.string()}")
+                    Log.d("ScreenUpload", "[UPLOAD SUCCESS] Server response: ${response.body?.string()}")
                 } else {
-                    Log.w("ScreenUpload", "❌ [UPLOAD FAILED] ${response.code} ${response.message}")
+                    Log.w("ScreenUpload", "[UPLOAD FAILED] ${response.code} ${response.message}")
                 }
             } catch (e: Exception) {
-                Log.e("ScreenUpload", "❗️ [UPLOAD ERROR]", e)
+                Log.e("ScreenUpload", "[UPLOAD ERROR]", e)
             }
         }
     }
@@ -246,43 +230,33 @@ class ScreenCaptureService : Service() {
     }
 
     private fun updateNotification() {
-        val isCapturing = this.isCapturing
-        val contentText: String
-        val actionTitle: String
-        val actionIntent: PendingIntent
-
-        if (isCapturing) {
-            contentText = "每5秒偵測一次畫面中..."
-            actionTitle = "暫停"
-            val stopIntent = Intent(this, ScreenCaptureService::class.java).apply { action = ACTION_STOP_CONTINUOUS_CAPTURE }
-            actionIntent = PendingIntent.getService(this, 1, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        } else {
-            contentText = "已暫停擷取。點擊按鈕以繼續。"
-            actionTitle = "開始"
-            val startIntent = Intent(this, ScreenCaptureService::class.java).apply { action = ACTION_START_CONTINUOUS_CAPTURE }
-            actionIntent = PendingIntent.getService(this, 2, startIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        }
+        val contentText = if (isServiceRunning) "每5秒偵測一次畫面中..." else "服務準備中..."
 
         val stopServiceIntent = Intent(this, ScreenCaptureService::class.java).apply { action = ACTION_STOP_SERVICE }
-        val stopServicePendingIntent = PendingIntent.getService(this, 3, stopServiceIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val stopServicePendingIntent = PendingIntent.getService(this, 1, stopServiceIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("螢幕擷取服務")
             .setContentText(contentText)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .addAction(0, actionTitle, actionIntent)
             .addAction(0, "停止服務", stopServicePendingIntent)
             .build()
 
-        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification)
+        // 為了讓 startForeground 能運作，我們需要先建立一個基本的通知
+        if (!isServiceRunning) {
+            startForeground(NOTIFICATION_ID, notification)
+        } else {
+            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification)
+        }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        stopContinuousCapture()
+        handler.removeCallbacks(captureRunnable)
         virtualDisplay?.release()
         mediaProjection?.stop()
         imageReader?.close()
+        Log.d("ScreenCaptureService", "服務已銷毀，所有資源已釋放。")
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
