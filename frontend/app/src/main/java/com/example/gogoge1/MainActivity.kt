@@ -59,6 +59,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val sessionToggleReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == FloatingService.ACTION_TOGGLE_SESSION) {
+                // 模擬點擊主按鈕，重複使用現有邏輯
+                btnControlSession.performClick()
+            }
+        }
+    }
+
     // --- 權限請求結果處理 ---
     private val screenCaptureLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -91,6 +100,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val overlayPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        if (Settings.canDrawOverlays(this)) {
+            startService(Intent(this, FloatingService::class.java))
+        } else {
+            Toast.makeText(this, "懸浮窗權限未授予，無法顯示浮動按鈕", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -100,35 +119,50 @@ class MainActivity : AppCompatActivity() {
         btnControlSession = findViewById(R.id.btn_control_session)
 
         // --- 註冊廣播接收器 ---
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(serviceResultReceiver, IntentFilter(ScreenCaptureService.ACTION_RESULT), RECEIVER_EXPORTED)
-        } else {
-            registerReceiver(serviceResultReceiver, IntentFilter(ScreenCaptureService.ACTION_RESULT))
-        }
+        registerReceivers()
 
         // --- 請求權限 ---
         requestAllPermissions()
+        requestOverlayPermission() // 請求懸浮窗權限
 
-        // --- 啟動懸浮球服務 ---
-        if (!Settings.canDrawOverlays(this)) {
-            // 跳轉到授權頁面
-            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                "package:$packageName".toUri())
-            startActivityForResult(intent, 1000)
-        } else {
-            // 已授權，啟動浮動球
-            startService(Intent(this, FloatingService::class.java))
-        }
-
-        // --- 【修改】設定單一按鈕的點擊事件 ---
+        // --- 設定按鈕點擊事件 ---
         btnControlSession.setOnClickListener {
             if (isSessionActive) {
-                // 如果正在執行中 -> 停止工作階段並傳送
                 stopSessionAndSend()
             } else {
-                // 如果是閒置狀態 -> 開始工作階段
                 startSession()
             }
+        }
+        updateUiState() // 初始化UI
+    }
+
+    // 【新增】將註冊邏輯抽出，方便管理
+    private fun registerReceivers() {
+        val serviceResultFilter = IntentFilter(ScreenCaptureService.ACTION_RESULT)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(serviceResultReceiver, serviceResultFilter, RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(serviceResultReceiver, serviceResultFilter)
+        }
+
+        val sessionToggleFilter = IntentFilter(FloatingService.ACTION_TOGGLE_SESSION)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(sessionToggleReceiver, sessionToggleFilter, RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(sessionToggleReceiver, sessionToggleFilter)
+        }
+    }
+
+    // 【新增】請求懸浮窗權限的函式
+    private fun requestOverlayPermission() {
+        if (!Settings.canDrawOverlays(this)) {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                "package:$packageName".toUri()
+            )
+            overlayPermissionLauncher.launch(intent)
+        } else {
+            startService(Intent(this, FloatingService::class.java))
         }
     }
 
@@ -218,6 +252,7 @@ class MainActivity : AppCompatActivity() {
 
     // 【新增】統一更新 UI 的函式
     private fun updateUiState() {
+        // 更新主按鈕
         if (isSessionActive) {
             btnControlSession.text = "停止並傳送"
             tvStatus.text = "螢幕分享與錄音進行中..."
@@ -225,6 +260,12 @@ class MainActivity : AppCompatActivity() {
             btnControlSession.text = "開始錄音與分享"
             tvStatus.text = "準備就緒"
         }
+
+        // 發送廣播通知 FloatingService 更新狀態
+        val updateIntent = Intent(FloatingService.ACTION_UPDATE_STATE).apply {
+            putExtra(FloatingService.EXTRA_IS_ACTIVE, isSessionActive)
+        }
+        sendBroadcast(updateIntent)
     }
 
     private fun playBase64Audio(base64Audio: String) {
@@ -281,6 +322,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         unregisterReceiver(serviceResultReceiver)
+        unregisterReceiver(sessionToggleReceiver)
         recorder?.release()
         player?.release()
         stopScreenCaptureService()
