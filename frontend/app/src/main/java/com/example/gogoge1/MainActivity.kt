@@ -1,5 +1,8 @@
 package com.example.gogoge1
 
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import android.Manifest
 import android.content.pm.PackageManager
 import android.media.MediaPlayer
@@ -19,6 +22,8 @@ import okhttp3.RequestBody.Companion.asRequestBody
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import androidx.core.net.toUri
+import android.util.Log
 
 class MainActivity : AppCompatActivity() {
     private var recorder: MediaRecorder? = null
@@ -28,6 +33,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Log.d("FloatingService", "Service started")
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
 
@@ -45,6 +51,21 @@ class MainActivity : AppCompatActivity() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 200)
+        }
+
+        // --- 啟動懸浮球服務 ---
+        if (!Settings.canDrawOverlays(this)) {
+            // 跳轉到授權頁面
+            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                "package:$packageName".toUri())
+            startActivityForResult(intent, 1000)
+        } else {
+            // 已授權，啟動浮動球
+            val showIntent = Intent(this, HighlightService::class.java).apply {
+                action = "SHOW_RECT"
+            }
+            startService(showIntent)
+            startService(Intent(this, FloatingService::class.java))
         }
 
         btnRecord.setOnClickListener {
