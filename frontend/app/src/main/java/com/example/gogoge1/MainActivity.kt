@@ -12,6 +12,9 @@ import android.media.MediaRecorder
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
 import android.util.Base64
 import android.util.Log
 import android.widget.Button
@@ -21,11 +24,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.net.toUri
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
-import android.provider.Settings
-import androidx.core.net.toUri
 
 
 class MainActivity : AppCompatActivity() {
@@ -35,23 +37,42 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnControlSession: Button
 
     // --- 狀態與功能變數 ---
-    private var isSessionActive = false // 【修改】合併 isRecording 和 isCapturing 的狀態
+    private var currentState: AppState = AppState.IDLE
     private var audioFile: File? = null
     private var recorder: MediaRecorder? = null
     private var player: MediaPlayer? = null
 
+    private val handler = Handler(Looper.getMainLooper())
+    private var timeoutRunnable: Runnable? = null
+    private val TIMEOUT_MS = 50000L
+    private var resetStateRunnable: Runnable? = null
     // --- 廣播接收器 (保持不變) ---
     private val serviceResultReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            val status = intent?.getStringExtra(ScreenCaptureService.EXTRA_STATUS) ?: "未知狀態"
+            cancelTimeout()
             val error = intent?.getStringExtra(ScreenCaptureService.EXTRA_ERROR)
-            val audioBase64 = intent?.getStringExtra(ScreenCaptureService.EXTRA_AUDIO_BASE64)
-
             if (error != null) {
                 tvStatus.text = "錯誤: $error"
                 Toast.makeText(this@MainActivity, "錯誤: $error", Toast.LENGTH_LONG).show()
+                // 發生錯誤時，無論如何都結束工作階段
+                updateState(AppState.ERROR)
+                return
+            }
+
+            // 提取所有回傳資料
+            val status = intent?.getStringExtra(ScreenCaptureService.EXTRA_STATUS) ?: "未知狀態"
+            val audioBase64 = intent?.getStringExtra(ScreenCaptureService.EXTRA_AUDIO_BASE64)
+            // 假設 Service 會傳回 mission_achieved 狀態
+            val missionAchieved = intent?.getBooleanExtra("MISSION_ACHIEVED", false) ?: false
+
+            tvStatus.text = "AI 回應: $status"
+            if (missionAchieved) {
+                updateState(AppState.SUCCESS)
+                if (audioBase64 != null) {
+                    playBase64Audio(audioBase64) // 播放最後的成功音訊
+                }
             } else {
-                tvStatus.text = "AI 回應: $status"
+                updateState(AppState.RESPONSE)
                 if (audioBase64 != null) {
                     playBase64Audio(audioBase64)
                 }
@@ -85,18 +106,11 @@ class MainActivity : AppCompatActivity() {
                 startService(serviceIntent)
             }
 
-            // 2. 【修改】在取得螢幕權限後，立刻開始錄音
+            // 2. 在取得螢幕權限後，立刻開始錄音
             startRecording()
-
-            // 3. 更新狀態
-            isSessionActive = true
-            updateUiState()
-
         } else {
             Toast.makeText(this, "未授予螢幕擷取權限", Toast.LENGTH_SHORT).show()
-            // 如果使用者拒絕，重設狀態
-            isSessionActive = false
-            updateUiState()
+            updateState(AppState.ERROR) // 權限失敗視為錯誤，回到閒置
         }
     }
 
@@ -127,16 +141,134 @@ class MainActivity : AppCompatActivity() {
 
         // --- 設定按鈕點擊事件 ---
         btnControlSession.setOnClickListener {
-            if (isSessionActive) {
-                stopSessionAndSend()
-            } else {
-                startSession()
+            when (currentState) {
+                AppState.IDLE, AppState.RESPONSE, AppState.SUCCESS, AppState.ERROR -> {
+                    // 從任何「已停止」的狀態，都可以開始一個新階段
+                    startSession()
+                }
+                AppState.RECORDING -> {
+                    // 正在錄音時，按鈕功能是「停止並傳送」
+                    stopAndSend()
+                }
+                AppState.THINKING -> {
+                    // 思考中，按鈕應為禁用狀態，不執行任何操作
+                }
             }
         }
-        updateUiState() // 初始化UI
+        updateState(AppState.IDLE) // 初始化 UI 狀態
+    }
+    private fun updateState(newState: AppState) {
+        if (currentState == newState) return // 狀態相同則不重複執行
+        currentState = newState
+        Log.d("MainActivity", "State changed to: $newState")
+
+        cancelResetState()
+
+        when (newState) {
+            AppState.IDLE -> {
+                btnControlSession.text = "開始錄音與分享"
+                tvStatus.text = "準備就緒"
+                btnControlSession.isEnabled = true
+            }
+            AppState.RECORDING -> {
+                player?.release() // 只要進入錄音狀態，就立刻停止播放音檔
+                player = null
+                btnControlSession.text = "停止並傳送"
+                tvStatus.text = "錄音中，請說話..."
+                btnControlSession.isEnabled = true
+            }
+            AppState.THINKING -> {
+                btnControlSession.isEnabled = false // 思考中，禁用按鈕防止重複點擊
+                tvStatus.text = "指令已發送，AI 思考中..."
+                startTimeout()
+            }
+            AppState.RESPONSE -> {
+                btnControlSession.text = "開始新對話" // 播放完畢後，可以再次錄音
+                btnControlSession.isEnabled = true
+            }
+            AppState.SUCCESS -> {
+                tvStatus.append("\n✨ 任務完成！")
+                btnControlSession.text = "開始新任務"
+                btnControlSession.isEnabled = true
+                // 延遲 3 秒後執行 cleanupSession，它會將狀態切換到 IDLE
+                resetStateRunnable = Runnable { cleanupSession() }
+                handler.postDelayed(resetStateRunnable!!, 3000L)
+            }
+            AppState.ERROR -> {
+                tvStatus.append("\n❌ 發生錯誤")
+                btnControlSession.text = "重試"
+                btnControlSession.isEnabled = true
+                // 延遲 3 秒後執行 cleanupSession
+                resetStateRunnable = Runnable { cleanupSession() }
+                handler.postDelayed(resetStateRunnable!!, 3000L)
+            }
+        }
+
+        // 發送廣播通知 FloatingService 更新狀態
+        val updateIntent = Intent(FloatingService.ACTION_UPDATE_STATE).apply {
+            putExtra(FloatingService.EXTRA_APP_STATE, newState.name) // 傳送狀態的名稱
+        }
+        sendBroadcast(updateIntent)
     }
 
-    // 【新增】將註冊邏輯抽出，方便管理
+    private fun startSession() {
+        cleanupSession()
+        updateState(AppState.RECORDING) // 狀態轉換為錄音中
+        val mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        screenCaptureLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
+    }
+
+    private fun stopAndSend() {
+        stopRecording()
+        if (audioFile?.exists() == true) {
+            updateState(AppState.THINKING) // 狀態轉換為思考中
+            Intent(this, ScreenCaptureService::class.java).also {
+                it.action = ScreenCaptureService.ACTION_CAPTURE_AND_SEND
+                it.putExtra(ScreenCaptureService.EXTRA_AUDIO_PATH, audioFile!!.absolutePath)
+                startService(it)
+            }
+        } else {
+            Toast.makeText(this, "找不到錄音檔案，無法傳送", Toast.LENGTH_SHORT).show()
+            updateState(AppState.ERROR)
+        }
+    }
+
+    private fun cleanupSession() {
+        Log.d("MainActivity", "正在清理工作階段資源...")
+        cancelResetState()
+        stopService(Intent(this, ScreenCaptureService::class.java))
+        audioFile?.delete()
+        audioFile = null
+        recorder?.release()
+        recorder = null
+        player?.release()
+        player = null
+        // 只有在目前狀態不是 IDLE 時才更新，避免重複觸發
+        if (currentState != AppState.IDLE) {
+            updateState(AppState.IDLE)
+        }
+    }
+    private fun startTimeout() {
+        cancelTimeout() // 先取消舊的，確保只有一個在跑
+        timeoutRunnable = Runnable {
+            Log.e("MainActivity", "服務回應超時！")
+            Toast.makeText(this, "錯誤：服務回應超時", Toast.LENGTH_LONG).show()
+            updateState(AppState.ERROR)
+        }
+        handler.postDelayed(timeoutRunnable!!, TIMEOUT_MS)
+    }
+
+    private fun cancelTimeout() {
+        timeoutRunnable?.let { handler.removeCallbacks(it) }
+        timeoutRunnable = null
+    }
+
+    private fun cancelResetState() {
+        resetStateRunnable?.let { handler.removeCallbacks(it) }
+        resetStateRunnable = null
+    }
+
+    // 將註冊邏輯抽出，方便管理
     private fun registerReceivers() {
         val serviceResultFilter = IntentFilter(ScreenCaptureService.ACTION_RESULT)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -153,7 +285,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // 【新增】請求懸浮窗權限的函式
     private fun requestOverlayPermission() {
         if (!Settings.canDrawOverlays(this)) {
             val intent = Intent(
@@ -166,34 +297,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // 【新增】開始工作階段的函式
-    private fun startSession() {
-        // 啟動工作階段的第一步是請求螢幕擷取權限
-        val mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        screenCaptureLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
-    }
-
-    // 【新增】停止工作階段並傳送的函式
-    private fun stopSessionAndSend() {
-        stopRecording() // 先停止錄音
-
-        // 檢查錄音檔是否存在
-        if (audioFile?.exists() == true) {
-            // 命令 Service 進行擷取並傳送
-            Intent(this, ScreenCaptureService::class.java).also {
-                it.action = ScreenCaptureService.ACTION_CAPTURE_AND_SEND
-                it.putExtra(ScreenCaptureService.EXTRA_AUDIO_PATH, audioFile!!.absolutePath)
-                startService(it)
-            }
-            tvStatus.text = "指令已發送，處理中..."
-        } else {
-            Toast.makeText(this, "找不到錄音檔案，無法傳送", Toast.LENGTH_SHORT).show()
-        }
-
-        // 停止螢幕擷取服務
-        stopScreenCaptureService()
-    }
-
     private fun startRecording() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             Toast.makeText(this, "請先授予錄音權限", Toast.LENGTH_SHORT).show()
@@ -203,12 +306,7 @@ class MainActivity : AppCompatActivity() {
 
         // 修改為 .m4a 格式以獲得更好的相容性
         audioFile = File(cacheDir, "input.m4a")
-        recorder = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            MediaRecorder(this)
-        } else {
-            @Suppress("DEPRECATION")
-            MediaRecorder()
-        }).apply {
+        recorder = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(this) else @Suppress("DEPRECATION") MediaRecorder()).apply {
             setAudioSource(MediaRecorder.AudioSource.MIC)
             setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
             setOutputFile(audioFile!!.absolutePath)
@@ -220,8 +318,7 @@ class MainActivity : AppCompatActivity() {
             } catch (e: IOException) {
                 Log.e("MainActivity", "MediaRecorder prepare() failed", e)
                 Toast.makeText(this@MainActivity, "錄音裝置啟動失敗", Toast.LENGTH_SHORT).show()
-                // 如果錄音失敗，也應該停止整個工作階段
-                stopSessionAndSend()
+                updateState(AppState.ERROR)
             }
         }
     }
@@ -245,30 +342,15 @@ class MainActivity : AppCompatActivity() {
             it.action = ScreenCaptureService.ACTION_STOP_SERVICE
             startService(it)
         }
-        // 重設狀態
-        isSessionActive = false
-        updateUiState()
     }
 
-    // 【新增】統一更新 UI 的函式
-    private fun updateUiState() {
-        // 更新主按鈕
-        if (isSessionActive) {
-            btnControlSession.text = "停止並傳送"
-            tvStatus.text = "螢幕分享與錄音進行中..."
-        } else {
-            btnControlSession.text = "開始錄音與分享"
-            tvStatus.text = "準備就緒"
-        }
 
-        // 發送廣播通知 FloatingService 更新狀態
-        val updateIntent = Intent(FloatingService.ACTION_UPDATE_STATE).apply {
-            putExtra(FloatingService.EXTRA_IS_ACTIVE, isSessionActive)
-        }
-        sendBroadcast(updateIntent)
-    }
 
     private fun playBase64Audio(base64Audio: String) {
+        if (currentState == AppState.RECORDING) {
+            Log.d("MainActivity", "正在錄音，已略過本次音檔播放。")
+            return
+        }
         try {
             val audioBytes = Base64.decode(base64Audio, Base64.DEFAULT)
             val tempMp3 = File.createTempFile("reply", "mp3", cacheDir)
@@ -278,26 +360,26 @@ class MainActivity : AppCompatActivity() {
             player = MediaPlayer().apply {
                 setDataSource(tempMp3.absolutePath)
                 prepareAsync()
-                setOnPreparedListener {
-                    tvStatus.text = "收到回覆，正在播放..."
-                    it.start()
-                }
+                setOnPreparedListener { it.start() }
                 setOnCompletionListener {
                     tvStatus.text = "播放完畢"
                     it.release()
                     tempMp3.delete()
+                    // 播放完畢後，如果任務還沒成功，可以停留在 RESPONSE 狀態
+                    // 如果任務已成功，則已經在 SUCCESS 狀態
                 }
-                setOnErrorListener { _, what, extra ->
-                    Log.e("MediaPlayer", "Playback Error - what: $what, extra: $extra")
+                setOnErrorListener { _, _, _ ->
                     tvStatus.text = "播放失敗"
                     release()
                     tempMp3.delete()
+                    updateState(AppState.ERROR)
                     true
                 }
             }
         } catch (e: Exception) {
             Log.e("MainActivity", "播放Base64音訊時出錯", e)
             tvStatus.text = "播放音訊時出錯"
+            updateState(AppState.ERROR)
         }
     }
 

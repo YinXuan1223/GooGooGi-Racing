@@ -7,7 +7,6 @@ import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
-//import android.icu.util.TimeUnit
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
@@ -25,7 +24,9 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
+import java.nio.ByteBuffer
 import java.util.concurrent.TimeUnit
+
 class ScreenCaptureService : Service() {
 
     private lateinit var mediaProjectionManager: MediaProjectionManager
@@ -39,6 +40,8 @@ class ScreenCaptureService : Service() {
         .writeTimeout(100, TimeUnit.SECONDS)
         .build()
 
+    // Variable to store the hash of the last successfully sent screen
+    private var lastScreenHash: Int? = null
 
     companion object {
         // Actions
@@ -54,6 +57,7 @@ class ScreenCaptureService : Service() {
         const val EXTRA_STATUS = "STATUS"
         const val EXTRA_ERROR = "ERROR"
         const val EXTRA_AUDIO_BASE64 = "AUDIO_BASE64"
+        const val EXTRA_MISSION_ACHIEVED = "MISSION_ACHIEVED"
 
         private const val NOTIFICATION_ID = 123
         private const val CHANNEL_ID = "ScreenCapture"
@@ -116,6 +120,7 @@ class ScreenCaptureService : Service() {
             return
         }
 
+        var finalBitmap: Bitmap? = null
         try {
             val planes = image.planes
             val buffer = planes[0].buffer
@@ -128,19 +133,78 @@ class ScreenCaptureService : Service() {
                 Bitmap.Config.ARGB_8888
             )
             bitmap.copyPixelsFromBuffer(buffer)
-            // 裁切掉因 rowPadding 產生的多餘寬度
-            val finalBitmap = Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height)
+            finalBitmap = Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height)
+            bitmap.recycle() // Recycle intermediate bitmap
 
-            sendToServer(audioFile, finalBitmap)
+            // --- Start of Integrated Logic ---
+            val newHash = generateScreenHash(finalBitmap)
+
+            if (lastScreenHash == null || newHash != lastScreenHash) {
+                Log.d("ScreenChange", "✅ [CHANGE DETECTED] 畫面已發生變更！準備上傳...")
+                // The hash is different, so we send the data to the server.
+                sendToServer(audioFile, finalBitmap)
+                // We update the hash *only after* deciding to send.
+                lastScreenHash = newHash
+            } else {
+                Log.d("ScreenChange", "⚪️ [NO CHANGE] 畫面無變化，本次不執行上傳。")
+                // Inform the calling activity that no action was taken.
+                sendError("畫面無變化")
+                finalBitmap.recycle() // Recycle bitmap since it's not being used.
+            }
+            // --- End of Integrated Logic ---
 
         } catch (e: Exception) {
             Log.e("ScreenCaptureService", "擷取或處理圖片時出錯", e)
             sendError("擷取或處理圖片時出錯")
+            finalBitmap?.recycle()
         } finally {
             image.close()
-            // 點陣圖使用完畢後應回收
-            // finalBitmap.recycle()
-            // bitmap.recycle()
+        }
+    }
+
+    /**
+     * Generates a fingerprint of the Bitmap after cropping the status bar
+     * to focus only on the application's content area.
+     */
+    private fun generateScreenHash(bitmap: Bitmap): Int {
+        val statusBarHeight = getStatusBarHeight()
+        // Check if there is enough height to crop
+        if (bitmap.height <= statusBarHeight) {
+            return bitmap.hashCode() // If height is insufficient, return original hash
+        }
+
+        // 1. Crop the status bar to keep only the app content area
+        val contentBitmap = Bitmap.createBitmap(
+            bitmap,
+            0,
+            statusBarHeight,
+            bitmap.width,
+            bitmap.height - statusBarHeight
+        )
+
+        // 2. Scale down the cropped image for performance and to ignore minor differences
+        val scaledBitmap = Bitmap.createScaledBitmap(contentBitmap, 32, 64, true)
+        contentBitmap.recycle()
+
+        // 3. Get the pixel data of the scaled-down image
+        val byteBuffer = ByteBuffer.allocate(scaledBitmap.byteCount)
+        scaledBitmap.copyPixelsToBuffer(byteBuffer)
+        scaledBitmap.recycle()
+
+        // 4. Calculate and return a simple hash code as the fingerprint
+        return byteBuffer.array().contentHashCode()
+    }
+
+    /**
+     * Gets the height of the status bar to exclude it from the screen comparison.
+     */
+    private fun getStatusBarHeight(): Int {
+        val resourceId = resources.getIdentifier("status_bar_height", "dimen", "android")
+        return if (resourceId > 0) {
+            resources.getDimensionPixelSize(resourceId)
+        } else {
+            // Provide a reasonable default value if the resource is not found
+            (24 * resources.displayMetrics.density).toInt()
         }
     }
 
@@ -148,8 +212,8 @@ class ScreenCaptureService : Service() {
         val stream = ByteArrayOutputStream()
         bitmap.compress(Bitmap.CompressFormat.PNG, 90, stream)
         val bitmapBytes = stream.toByteArray()
+        bitmap.recycle() // Recycle the bitmap after it has been converted to a byte array
 
-        // 您的 sendToServer 邏輯已整合，這部分是正確的
         val requestBody = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart("file", audioFile.name, audioFile.asRequestBody("audio/3gpp".toMediaType()))
@@ -157,7 +221,7 @@ class ScreenCaptureService : Service() {
             .build()
 
         val request = Request.Builder()
-            .url("http://192.168.0.188:5000/img") // 使用模擬器IP，並確認端點正確
+            .url("http://10.0.2.2:5000/img")
             .post(requestBody)
             .build()
 
@@ -172,9 +236,10 @@ class ScreenCaptureService : Service() {
                 if (response.isSuccessful && responseBody != null) {
                     try {
                         val json = JSONObject(responseBody)
+                        val missionAchieved = json.optBoolean("mission_achieved", false)
                         val status = json.getString("ai_response")
                         val audioBase64 = json.getString("audio_base64")
-                        sendSuccess(status, audioBase64)
+                        sendSuccess(status, audioBase64, missionAchieved)
                     } catch (e: Exception) {
                         Log.e("ScreenCaptureService", "解析JSON回應時出錯", e)
                         sendError("解析JSON回應時出錯")
@@ -186,19 +251,19 @@ class ScreenCaptureService : Service() {
         })
     }
 
-    // 將成功結果廣播回 Activity
-    private fun sendSuccess(status: String, audioBase64: String) {
+    private fun sendSuccess(status: String, audioBase64: String, missionAchieved: Boolean) {
         Intent(ACTION_RESULT).also {
             it.putExtra(EXTRA_STATUS, status)
             it.putExtra(EXTRA_AUDIO_BASE64, audioBase64)
+            it.putExtra(EXTRA_MISSION_ACHIEVED, missionAchieved)
             sendBroadcast(it)
         }
     }
 
-    // 將錯誤訊息廣播回 Activity
     private fun sendError(error: String) {
         Intent(ACTION_RESULT).also {
             it.putExtra(EXTRA_ERROR, error)
+            it.putExtra(EXTRA_MISSION_ACHIEVED, true)
             sendBroadcast(it)
         }
     }
@@ -211,7 +276,7 @@ class ScreenCaptureService : Service() {
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("螢幕擷取服務已啟動")
             .setContentText("正在等待指令...")
-            .setSmallIcon(R.mipmap.ic_launcher) // 請確認您有這個圖示資源
+            .setSmallIcon(R.mipmap.ic_launcher)
             .build()
         startForeground(NOTIFICATION_ID, notification)
     }

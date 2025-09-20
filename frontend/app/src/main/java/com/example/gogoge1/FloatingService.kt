@@ -18,24 +18,34 @@ class FloatingService : Service() {
 
     private lateinit var windowManager: WindowManager
     private lateinit var floatingView: View
-    private var isSessionActive = false // 用於追蹤目前狀態
+    private var currentState: AppState = AppState.IDLE
 
     // 定義狀態對應的圖片
-    private val activeImage = R.drawable.ball1  // 執行中狀態
-    private val inactiveImage = R.drawable.ball2 // 閒置狀態
+    private val idleImage = R.drawable.idle
+    private val recordingImage = R.drawable.recording
+    private val thinkingImage = R.drawable.thinking
+    private val responseImage = R.drawable.answer
+    private val successImage = R.drawable.success
+    private val errorImage = R.drawable.error
+    // 【附註】請確保 R.drawable.recording 和 R.drawable.thinking 圖檔已存在於您的專案中
 
     companion object {
-        // 【新增】定義廣播 Actions，避免字串寫死
         const val ACTION_TOGGLE_SESSION = "com.example.gogoge1.ACTION_TOGGLE_SESSION"
         const val ACTION_UPDATE_STATE = "com.example.gogoge1.ACTION_UPDATE_STATE"
-        const val EXTRA_IS_ACTIVE = "EXTRA_IS_ACTIVE"
+        const val EXTRA_APP_STATE = "EXTRA_APP_STATE"
     }
 
-    // 【新增】廣播接收器，用來接收來自 MainActivity 的狀態更新
     private val stateUpdateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == ACTION_UPDATE_STATE) {
-                isSessionActive = intent.getBooleanExtra(EXTRA_IS_ACTIVE, false)
+                val stateName = intent.getStringExtra(EXTRA_APP_STATE)
+                currentState = try {
+                    // 安全地將字串轉換回 AppState 枚舉
+                    AppState.valueOf(stateName ?: "IDLE")
+                } catch (e: IllegalArgumentException) {
+                    // 如果收到未知的狀態名稱，則預設為 IDLE，避免崩潰
+                    AppState.IDLE
+                }
                 updateFloatingViewIcon()
             }
         }
@@ -51,27 +61,27 @@ class FloatingService : Service() {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
-        )
-        params.gravity = Gravity.TOP or Gravity.START
-        params.x = 0
-        params.y = 100
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = 0
+            y = 100
+        }
 
         windowManager.addView(floatingView, params)
 
-        // 【新增】註冊廣播接收器
+        val intentFilter = IntentFilter(ACTION_UPDATE_STATE)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(stateUpdateReceiver, IntentFilter(ACTION_UPDATE_STATE), RECEIVER_EXPORTED)
+            registerReceiver(stateUpdateReceiver, intentFilter, RECEIVER_EXPORTED)
         } else {
-            registerReceiver(stateUpdateReceiver, IntentFilter(ACTION_UPDATE_STATE))
+            registerReceiver(stateUpdateReceiver, intentFilter)
         }
     }
 
     private fun createFloatingView(): View {
         return View(this).apply {
-            // 初始背景設為閒置狀態
-            background = ContextCompat.getDrawable(this@FloatingService, inactiveImage)
+            background = ContextCompat.getDrawable(this@FloatingService, idleImage)
 
-            // --- 拖曳邏輯 (保持不變) ---
+            // --- 拖曳與點擊邏輯 (保持不變) ---
             var initialX = 0
             var initialY = 0
             var touchStartX = 0f
@@ -92,7 +102,7 @@ class FloatingService : Service() {
                     MotionEvent.ACTION_MOVE -> {
                         val dx = (event.rawX - touchStartX).toInt()
                         val dy = (event.rawY - touchStartY).toInt()
-                        if (!isDragging && (dx * dx + dy * dy) > 25) { // 判斷為拖曳
+                        if (!isDragging && (dx * dx + dy * dy) > 25) {
                             isDragging = true
                         }
                         if (isDragging) {
@@ -105,7 +115,6 @@ class FloatingService : Service() {
                     MotionEvent.ACTION_UP -> {
                         if (!isDragging) {
                             v.performClick()
-                            // 【修改】點擊時，發送廣播通知 MainActivity
                             sendBroadcast(Intent(ACTION_TOGGLE_SESSION))
                         }
                         true
@@ -116,16 +125,21 @@ class FloatingService : Service() {
         }
     }
 
-    // 【新增】更新圖示的函式
     private fun updateFloatingViewIcon() {
-        val newIcon = if (isSessionActive) activeImage else inactiveImage
-        floatingView.background = ContextCompat.getDrawable(this, newIcon)
+        val newIconRes = when (currentState) {
+            AppState.IDLE -> idleImage
+            AppState.RECORDING -> recordingImage
+            AppState.THINKING -> thinkingImage
+            AppState.RESPONSE -> responseImage
+            AppState.SUCCESS -> successImage
+            AppState.ERROR -> errorImage
+        }
+        floatingView.background = ContextCompat.getDrawable(this, newIconRes)
     }
 
     override fun onDestroy() {
         super.onDestroy()
         windowManager.removeView(floatingView)
-        // 【新增】取消註冊廣播接收器
         unregisterReceiver(stateUpdateReceiver)
     }
 
