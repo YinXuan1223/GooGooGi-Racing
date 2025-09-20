@@ -4,24 +4,21 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="16dp">
+    android:padding="16dp"
+    android:gravity="center_horizontal">
 
     <Button
-        android:id="@+id/btnRecord"
+        android:id="@+id/btnStartBubble"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Start/Stop Recording" />
-
-    <Button
-        android:id="@+id/btnSend"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Send to Python" />
+        android:layout_marginTop="50dp"
+        android:text="SStart Floating Bubble" />
 
     <TextView
         android:id="@+id/tvStatus"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Status..."
-        android:paddingTop="20dp"/>
+        android:paddingTop="20dp"
+        android:gravity="center"/>
 </LinearLayout>

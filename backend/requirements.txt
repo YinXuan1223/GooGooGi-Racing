@@ -2,3 +2,4 @@ Flask==3.0.3
 google-genai==1.24.0
 Pillow
 python-dotenv
+gtts

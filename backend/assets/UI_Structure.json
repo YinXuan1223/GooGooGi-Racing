@@ -1,0 +1,126 @@
+{
+    "eventType": 2048,
+    "package": "com.android.systemui",
+    "nodes": [
+    {
+        "className": "android.widget.FrameLayout",
+        "text": "null",
+        "contentDescription": "null",
+        "viewId": "null",
+        "bounds": {
+        "l": 0,
+        "t": 0,
+        "r": 1080,
+        "b": 2424
+        }
+    },
+    {
+        "className": "android.webkit.WebView",
+        "text": "null",
+        "contentDescription": "null",
+        "viewId": "null",
+        "bounds": {
+        "l": 0,
+        "t": 142,
+        "r": 1080,
+        "b": 2172
+        }
+    },
+    {
+        "className": "android.webkit.WebView",
+        "text": "Sign in - Google Accounts",
+        "contentDescription": "null",
+        "viewId": "null",
+        "bounds": {
+        "l": 0,
+        "t": 142,
+        "r": 1082,
+        "b": 2175
+        }
+    },
+    {
+        "className": "android.widget.TextView",
+        "text": "Sign in",
+        "contentDescription": "null",
+        "viewId": "null",
+        "bounds": {
+        "l": 446,
+        "t": 394,
+        "r": 635,
+        "b": 475
+        }
+    },
+    {
+        "className": "android.widget.TextView",
+        "text": "Use your Google Account. The account will be added to this device and available to other Google apps.",
+        "contentDescription": "null",
+        "viewId": "null",
+        "bounds": {
+        "l": 68,
+        "t": 501,
+        "r": 1013,
+        "b": 680
+        }
+    },
+    {
+        "className": "android.widget.Button",
+        "text": "Learn more about using your account",
+        "contentDescription": "null",
+        "viewId": "learnMore",
+        "bounds": {
+        "l": 170,
+        "t": 685,
+        "r": 910,
+        "b": 748
+        }
+    },
+    {
+        "className": "android.widget.EditText",
+        "text": "",
+        "contentDescription": "null",
+        "viewId": "identifierId",
+        "bounds": {
+        "l": 63,
+        "t": 835,
+        "r": 1018,
+        "b": 982
+        }
+    },
+    {
+        "className": "android.widget.Button",
+        "text": "Forgot email?",
+        "contentDescription": "null",
+        "viewId": "null",
+        "bounds": {
+        "l": 52,
+        "t": 1003,
+        "r": 304,
+        "b": 1058
+        }
+    },
+    {
+        "className": "android.widget.Button",
+        "text": "Create account",
+        "contentDescription": "null",
+        "viewId": "null",
+        "bounds": {
+        "l": 39,
+        "t": 1205,
+        "r": 354,
+        "b": 1304
+        }
+    },
+    {
+        "className": "android.widget.Button",
+        "text": "NEXT",
+        "contentDescription": "null",
+        "viewId": "null",
+        "bounds": {
+        "l": 796,
+        "t": 2203,
+        "r": 1027,
+        "b": 2329
+        }
+    }
+    ]
+}
