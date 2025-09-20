@@ -35,6 +35,7 @@ def img_server():
             return jsonify({"error": "未找到圖片"}), 400
         else :
             print("image received")
+
         image = Image.open(image_file.stream)
 
         # 暫存音檔
@@ -105,6 +106,7 @@ def img_server():
             encoded_audio = base64.b64encode(audio_file.read()).decode("utf-8")
 
         print(f"mission achieved? {mission_achieved}, ai response: {ai_response}")
+
         return jsonify({
             "mission_achieved": mission_achieved,
             "ai_response": ai_response,
@@ -118,6 +120,7 @@ def img_server():
     except Exception as e:
         return jsonify({"error": f"處理請求時發生錯誤: {str(e)}"}), 500
     finally:
+
         # Clean up temporary files
         cleanup_files = []
         
@@ -139,6 +142,7 @@ def img_server():
                     print(f"Warning: Could not delete {path} - file may be in use")
                 except Exception as e:
                     print(f"Warning: Error deleting {path}: {e}")
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)

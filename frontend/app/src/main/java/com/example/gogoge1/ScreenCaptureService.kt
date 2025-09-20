@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
+//import android.icu.util.TimeUnit
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
@@ -24,7 +25,7 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
-
+import java.util.concurrent.TimeUnit
 class ScreenCaptureService : Service() {
 
     private lateinit var mediaProjectionManager: MediaProjectionManager
@@ -32,7 +33,12 @@ class ScreenCaptureService : Service() {
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
     private val handler = Handler(Looper.getMainLooper())
-    private val client = OkHttpClient()
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(100, TimeUnit.SECONDS)
+        .readTimeout(100, TimeUnit.SECONDS)
+        .writeTimeout(100, TimeUnit.SECONDS)
+        .build()
+
 
     companion object {
         // Actions
@@ -150,7 +156,6 @@ class ScreenCaptureService : Service() {
             .addFormDataPart("image", "screenshot.png", bitmapBytes.toRequestBody("image/png".toMediaType()))
             .build()
 
-        // **注意**: 請確認您的後端端點是 /img 還是 /process
         val request = Request.Builder()
             .url("http://192.168.0.188:5000/img") // 使用模擬器IP，並確認端點正確
             .post(requestBody)
