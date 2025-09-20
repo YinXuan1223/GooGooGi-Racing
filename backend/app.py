@@ -1,16 +1,11 @@
-from flask import Flask, request, jsonify
-
+# server code for debugging
 from flask import Flask, request, jsonify
 
 import os
 import json
 import json
 from dotenv import load_dotenv
-
-import base64
-import tempfile
-from gtts import gTTS
-from pydub import AudioSegment
+from datetime import datetime
 
 import base64
 import tempfile
@@ -42,7 +37,10 @@ def img_server():
         # 接收錄音檔
         file = request.files.get("file")
         if not file:
+            print("no voice")
             return jsonify({"error": "未找到語音檔案"}), 400
+        else:
+            print("voice received")
 
         # 接收圖片
         image_file = request.files.get("image")
@@ -51,17 +49,55 @@ def img_server():
             return jsonify({"error": "未找到圖片"}), 400
         else :
             print("image received")
-        image = Image.open(image_file.stream)
 
-        # 暫存音檔
+        # 建立 assets 目錄（如果不存在）
+        assets_dir = "assets"
+        if not os.path.exists(assets_dir):
+            os.makedirs(assets_dir)
+
+        # 生成帶時間戳的檔名
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        original_filename = image_file.filename or "image"
+        file_extension = os.path.splitext(original_filename)[1] or ".jpg"
+        saved_image_filename = f"received_image_{timestamp}{file_extension}"
+        saved_image_path = os.path.join(assets_dir, saved_image_filename)
+
+        # 儲存圖片
+        image_file.seek(0)  # 重置文件指針到開頭
+        image_file.save(saved_image_path)
+        print(f"圖片已儲存至: {saved_image_path}")
+
+        # 開啟圖片進行處理
+        image_file.seek(0)  # 重置文件指針以重新讀取
+        image = Image.open(image_file.stream)
+        
+        # 保存原始語音檔案
+        original_voice_filename = file.filename or "voice"
+        voice_file_extension = os.path.splitext(original_voice_filename)[1] or ".mp3"
+        saved_voice_filename = f"received_voice_{timestamp}{voice_file_extension}"
+        saved_voice_path = os.path.join(assets_dir, saved_voice_filename)
+        
+        # 儲存原始語音檔案
+        file.seek(0)  # 重置文件指針到開頭
+        file.save(saved_voice_path)
+        print(f"語音檔案已儲存至: {saved_voice_path}")
+
+        # 暫存音檔進行處理
         input_path = "temp_input"
         wav_path = "temp.wav"
+        file.seek(0)  # 重置文件指針
         file.save(input_path)
 
         # 語音轉 WAV 格式 (16kHz, mono)
         sound = AudioSegment.from_file(input_path)
         sound = sound.set_frame_rate(16000).set_channels(1)
         sound.export(wav_path, format="wav")
+        
+        # 同時保存處理後的 WAV 檔案
+        saved_wav_filename = f"processed_voice_{timestamp}.wav"
+        saved_wav_path = os.path.join(assets_dir, saved_wav_filename)
+        sound.export(saved_wav_path, format="wav")
+        print(f"處理後的WAV檔案已儲存至: {saved_wav_path}")
 
         # 語音轉文字
         r = sr.Recognizer()
@@ -124,7 +160,7 @@ def img_server():
         return jsonify({
             "mission_achieved": mission_achieved,
             "ai_response": ai_response,
-            "audio_base64": encoded_audio
+            "audio_base64": encoded_audio,
         })
 
     except sr.UnknownValueError:
@@ -145,6 +181,15 @@ def img_server():
             cleanup_files.append(locals()['wav_path'])
         if 'temp_audio_path' in locals():
             cleanup_files.append(locals()['temp_audio_path'])
+        
+        # Note: saved_image_path, saved_voice_path, and saved_wav_path are kept permanently in assets directory
+        # If you want to clean up saved files as well, uncomment the next lines:
+        # if 'saved_image_path' in locals():
+        #     cleanup_files.append(locals()['saved_image_path'])
+        # if 'saved_voice_path' in locals():
+        #     cleanup_files.append(locals()['saved_voice_path'])
+        # if 'saved_wav_path' in locals():
+        #     cleanup_files.append(locals()['saved_wav_path'])
         
         # Clean up each file with error handling
         for path in cleanup_files:
