@@ -3,7 +3,6 @@ from flask import Flask, request, jsonify
 
 import os
 import json
-import json
 from dotenv import load_dotenv
 from datetime import datetime
 
@@ -25,10 +24,7 @@ from google.genai import types
 
 load_dotenv()
 app = Flask(__name__)
-load_dotenv()
-app = Flask(__name__)
 
-client = genai.Client(api_key=os.getenv("GENAI_API_KEY"))
 client = genai.Client(api_key=os.getenv("GENAI_API_KEY"))
 
 @app.route("/img", methods=["POST"])
@@ -165,7 +161,6 @@ def img_server():
 
     except sr.UnknownValueError:
         return jsonify({"error": "Google 語音辨識服務無法辨識語音"}), 500
-        return jsonify({"error": "Google 語音辨識服務無法辨識語音"}), 500
     except sr.RequestError as e:
         return jsonify({"error": f"無法從 Google 語音辨識服務取得結果; {e}"}), 500
     except Exception as e:
@@ -203,5 +198,4 @@ def img_server():
                     print(f"Warning: Error deleting {path}: {e}")
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
     app.run(host="0.0.0.0", port=5000, debug=True)
