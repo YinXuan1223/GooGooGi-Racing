@@ -2,18 +2,16 @@ package com.example.gogoge1
 
 import android.app.Service
 import android.content.Intent
-import android.graphics.Color
 import android.graphics.PixelFormat
 import android.os.IBinder
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
-import android.util.Log
-import android.graphics.drawable.GradientDrawable
-import androidx.core.content.ContextCompat
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import android.view.MotionEvent
 import android.widget.ImageView
+import androidx.lifecycle.Observer
 import com.bumptech.glide.Glide
 
 
@@ -23,18 +21,48 @@ class FloatingService : Service() {
     private lateinit var floatingView: View
     private var imageIndex = 0
 
+//    var app = application as MyApp
+    private lateinit var app: MyApp
+
+
     // 假設你有五張圖片放在 drawable：ball1 ~ ball5
     private val images = listOf(
-        R.drawable.ball1,
-        R.drawable.ball2,
-        R.raw.gif,
+        R.drawable.idle,
         R.raw.recording,
-//        R.drawable.ball4,
-//        R.drawable.ball5
+        R.raw.thinking,
+        R.raw.guiding,
+        R.drawable.error_0,
+        R.drawable.success_0,
     )
+
+    private fun updateButtonBackground() {
+        val imageRes = images[(app.globalState.value?:0) as Int]
+        val typeName = resources.getResourceTypeName(imageRes)
+
+        if (typeName == "raw") {
+            // raw → 預設當成GIF來播
+            Glide.with(this@FloatingService)
+                .asGif()
+                .load(imageRes)
+                .into(floatingView as ImageView)
+        } else {
+            // drawable → 靜態圖
+            Glide.with(this@FloatingService)
+                .load(imageRes)
+                .into(floatingView as ImageView)
+        }
+
+        // 這裡放你改變懸浮球 / 按鈕背景的程式
+    }
+    private val stateObserver = Observer<Int> { state ->
+        updateButtonBackground()
+    }
 
     override fun onCreate() {
         super.onCreate()
+        app = application as MyApp
+
+
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
 
         floatingView = ImageView(this).apply {
@@ -43,8 +71,7 @@ class FloatingService : Service() {
 
             //直接寫死
             Glide.with(this@FloatingService)
-                .asGif()
-                .load(R.raw.gif)  // raw/ball1.gif
+                .load(R.drawable.idle)
                 .into(this)
 
             var initialX = 0
@@ -88,24 +115,20 @@ class FloatingService : Service() {
                             // Accessibility 建議：performClick
                             v.performClick()
 
-                            // 切換圖片
-                            imageIndex = (imageIndex + 1) % images.size
-
-                            val imageRes = images[imageIndex]
-                            val typeName = resources.getResourceTypeName(imageRes)
-
-                            if (typeName == "raw") {
-                                // raw → 預設當成 GIF 來播
-                                Glide.with(this@FloatingService)
-                                    .asGif()
-                                    .load(imageRes)
-                                    .into(floatingView as ImageView)
-                            } else {
-                                // drawable → 靜態圖
-                                Glide.with(this@FloatingService)
-                                    .load(imageRes)
-                                    .into(floatingView as ImageView)
+                            // 轉換State
+                            val app = application as MyApp
+                            Log.d("UiCollector", "globalState = ${app.globalState}")
+                            when (app.globalState.value) {
+                                0 -> app.globalState.value = 1
+                                1 -> app.globalState.value = 2
+                                else -> app.globalState.value = 1
                             }
+
+
+
+
+                            // 切換圖片
+                            updateButtonBackground()
 
 
                             // 發送廣播
@@ -135,7 +158,7 @@ class FloatingService : Service() {
         params.gravity = Gravity.TOP or Gravity.START
         params.x = 0
         params.y = 100
-
+        app.globalState.observeForever(stateObserver)
         windowManager.addView(floatingView, params)
     }
 
@@ -144,6 +167,7 @@ class FloatingService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         windowManager.removeView(floatingView)
+        app.globalState.removeObserver(stateObserver)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

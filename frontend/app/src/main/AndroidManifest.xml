@@ -10,6 +10,7 @@
 
 
     <application
+        android:name=".MyApp"
         android:usesCleartextTraffic="true"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -47,6 +48,8 @@
         <service
             android:name=".HighlightService"
             android:exported="false"/>
+        <service
+            android:name=".RecorderService"/>
     </application>
 
 </manifest>

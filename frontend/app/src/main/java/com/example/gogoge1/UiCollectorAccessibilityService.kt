@@ -31,7 +31,10 @@ class UiCollectorAccessibilityService : AccessibilityService() {
     private var lastSent = 0L
     private val THROTTLE_MS = 1500L
 
+
+
     override fun onServiceConnected() {
+
         Log.d(TAG, "Service connected")
         val info = AccessibilityServiceInfo().apply {
             eventTypes =
@@ -48,9 +51,12 @@ class UiCollectorAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        val app = application as MyApp
+        Log.d("UiCollector", "globalState = ${app.globalState}")
         Log.d(TAG, "Event triggered: ${event?.eventType}")
         val now = System.currentTimeMillis()
         if (now - lastSent < THROTTLE_MS) return
+        if(app.globalState.value == 0)return;
         lastSent = now
 
         val root = rootInActiveWindow ?: return

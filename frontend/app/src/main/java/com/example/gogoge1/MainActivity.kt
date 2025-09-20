@@ -68,6 +68,9 @@ class MainActivity : AppCompatActivity() {
             startService(Intent(this, FloatingService::class.java))
         }
 
+        val app = application as MyApp
+        app.globalState.value = 0
+
         btnRecord.setOnClickListener {
             if (recorder == null) startRecording() else stopRecording()
         }
@@ -75,29 +78,11 @@ class MainActivity : AppCompatActivity() {
         btnSend.setOnClickListener {
             audioFile?.let { sendToServer(it) }
         }
+
+        // 啟動 RecorderService
+        startService(Intent(this, RecorderService::class.java))
     }
 
-    private fun startRecording() {
-        audioFile = File(cacheDir, "input.wav")
-        recorder = MediaRecorder().apply {
-            setAudioSource(MediaRecorder.AudioSource.MIC)
-            setOutputFormat(MediaRecorder.OutputFormat.THREE_GPP) // or MPEG_4
-            setOutputFile(audioFile!!.absolutePath)
-            setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB)
-            prepare()
-            start()
-        }
-        tvStatus.text = "Recording..."
-    }
-
-    private fun stopRecording() {
-        recorder?.apply {
-            stop()
-            release()
-        }
-        recorder = null
-        tvStatus.text = "Recording stopped"
-    }
 
     private fun sendToServer(file: File) {
         val requestBody = MultipartBody.Builder()
