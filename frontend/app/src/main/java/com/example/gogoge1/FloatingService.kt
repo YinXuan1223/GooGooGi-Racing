@@ -8,42 +8,88 @@ import android.os.IBinder
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
-import android.util.Log
-import android.graphics.drawable.GradientDrawable
-
+import android.view.MotionEvent
+import androidx.core.content.ContextCompat
 
 class FloatingService : Service() {
 
     private lateinit var windowManager: WindowManager
     private lateinit var floatingView: View
-    private var colorIndex = 0
-    private val colors = listOf(
-        Color.RED, Color.GREEN, Color.BLUE, Color.YELLOW, Color.MAGENTA
+    private var imageIndex = 0
+
+    // 假設你有五張圖片放在 drawable：ball1 ~ ball5
+    private val images = listOf(
+        R.drawable.ball1,
+        R.drawable.ball2
+//        R.drawable.ball3,
+//        R.drawable.ball4,
+//        R.drawable.ball5
     )
 
     override fun onCreate() {
         super.onCreate()
-        Log.d("FloatingService", "Service started")
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
 
         floatingView = View(this).apply {
-            // 先建立 GradientDrawable
-            val drawable = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(colors?.get(colorIndex) ?: Color.RED)  // 初始顏色
-            }
-            background = drawable  // 設為背景
+            // 初始背景
+            background = ContextCompat.getDrawable(this@FloatingService, images[imageIndex])
 
-            setOnClickListener {
-                //主要要做事的地方，偵測變化
-                colorIndex = (colorIndex + 1) % colors.size
-                drawable.setColor(colors[colorIndex])  // 更新顏色
+            var initialX = 0
+            var initialY = 0
+            var touchStartX = 0f
+            var touchStartY = 0f
+            var isDragging = false
+
+            setOnTouchListener { v, event ->
+                val params = v.layoutParams as WindowManager.LayoutParams
+
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        initialX = params.x
+                        initialY = params.y
+                        touchStartX = event.rawX
+                        touchStartY = event.rawY
+                        isDragging = false
+                        true
+                    }
+
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = (event.rawX - touchStartX).toInt()
+                        val dy = (event.rawY - touchStartY).toInt()
+
+                        // 判斷是否拖曳
+                        if (!isDragging && (dx * dx + dy * dy) > 25) {
+                            isDragging = true
+                        }
+
+                        if (isDragging) {
+                            params.x = initialX + dx
+                            params.y = initialY + dy
+                            windowManager.updateViewLayout(v, params)
+                        }
+                        true
+                    }
+
+                    MotionEvent.ACTION_UP -> {
+                        if (!isDragging) {
+                            // Accessibility 建議：performClick
+                            v.performClick()
+
+                            // 切換圖片
+                            imageIndex = (imageIndex + 1) % images.size
+                            background =
+                                ContextCompat.getDrawable(this@FloatingService, images[imageIndex])
+                        }
+                        true
+                    }
+
+                    else -> false
+                }
             }
         }
 
-
         val params = WindowManager.LayoutParams(
-            150, 150, // 懸浮球大小
+            300, 300,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
