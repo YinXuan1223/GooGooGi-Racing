@@ -4,24 +4,37 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
+    android:gravity="center_horizontal"
     android:padding="16dp">
+
+    <!-- 【增加處】新增了這個按鈕以匹配 MainActivity.kt 中的 findViewById -->
+    <Button
+        android:id="@+id/btnToggleCapture"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"
+        android:text="開始偵測畫面" />
 
     <Button
         android:id="@+id/btnRecord"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Start/Stop Recording" />
+        android:layout_marginBottom="8dp"
+        android:text="開始錄音" />
 
     <Button
         android:id="@+id/btnSend"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Send to Python" />
+        android:text="傳送指令" />
 
     <TextView
         android:id="@+id/tvStatus"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Status..."
-        android:paddingTop="20dp"/>
+        android:text="狀態..."
+        android:paddingTop="20dp"
+        android:gravity="center"
+        android:textSize="16sp"/>
+
 </LinearLayout>
