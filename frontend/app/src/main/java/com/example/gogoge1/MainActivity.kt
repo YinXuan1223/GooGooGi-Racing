@@ -8,7 +8,6 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.media.MediaPlayer
-import android.media.MediaRecorder
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
@@ -27,7 +26,6 @@ import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import java.io.File
 import java.io.FileOutputStream
-import java.io.IOException
 
 
 class MainActivity : AppCompatActivity() {
@@ -39,7 +37,6 @@ class MainActivity : AppCompatActivity() {
     // --- 狀態與功能變數 ---
     private var currentState: AppState = AppState.IDLE
     private var audioFile: File? = null
-    private var recorder: MediaRecorder? = null
     private var player: MediaPlayer? = null
 
     private val handler = Handler(Looper.getMainLooper())
@@ -65,7 +62,7 @@ class MainActivity : AppCompatActivity() {
             // 假設 Service 會傳回 mission_achieved 狀態
             val missionAchieved = intent?.getBooleanExtra("MISSION_ACHIEVED", false) ?: false
 
-            tvStatus.text = "AI 回應: $status"
+
             if (missionAchieved) {
                 updateState(AppState.SUCCESS)
                 if (audioBase64 != null) {
@@ -184,7 +181,7 @@ class MainActivity : AppCompatActivity() {
             }
             AppState.RESPONSE -> {
                 btnControlSession.text = "開始新對話" // 播放完畢後，可以再次錄音
-                btnControlSession.isEnabled = true
+                btnControlSession.isEnabled = false
             }
             AppState.SUCCESS -> {
                 tvStatus.append("\n✨ 任務完成！")
@@ -220,17 +217,22 @@ class MainActivity : AppCompatActivity() {
 
     private fun stopAndSend() {
         stopRecording()
-        if (audioFile?.exists() == true) {
-            updateState(AppState.THINKING) // 狀態轉換為思考中
-            Intent(this, ScreenCaptureService::class.java).also {
-                it.action = ScreenCaptureService.ACTION_CAPTURE_AND_SEND
-                it.putExtra(ScreenCaptureService.EXTRA_AUDIO_PATH, audioFile!!.absolutePath)
-                startService(it)
+
+        // 2. 延遲一小段時間 (例如 100ms)，確保錄音檔已完全寫入
+        handler.postDelayed({
+            // 3. 延遲後，再發送「開始監控」指令
+            if (audioFile?.exists() == true) {
+                updateState(AppState.THINKING) // 狀態轉換為思考中
+                Intent(this, ScreenCaptureService::class.java).also {
+                    it.action = ScreenCaptureService.ACTION_START_MONITORING
+                    it.putExtra(ScreenCaptureService.EXTRA_AUDIO_PATH, audioFile!!.absolutePath)
+                    startService(it)
+                }
+            } else {
+                Toast.makeText(this, "找不到錄音檔案，無法傳送", Toast.LENGTH_SHORT).show()
+                updateState(AppState.ERROR)
             }
-        } else {
-            Toast.makeText(this, "找不到錄音檔案，無法傳送", Toast.LENGTH_SHORT).show()
-            updateState(AppState.ERROR)
-        }
+        }, 100)
     }
 
     private fun cleanupSession() {
@@ -239,8 +241,6 @@ class MainActivity : AppCompatActivity() {
         stopService(Intent(this, ScreenCaptureService::class.java))
         audioFile?.delete()
         audioFile = null
-        recorder?.release()
-        recorder = null
         player?.release()
         player = null
         // 只有在目前狀態不是 IDLE 時才更新，避免重複觸發
@@ -298,42 +298,36 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startRecording() {
+        // 檢查權限的邏輯仍然可以保留
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             Toast.makeText(this, "請先授予錄音權限", Toast.LENGTH_SHORT).show()
             requestAllPermissions()
             return
         }
 
-        // 修改為 .m4a 格式以獲得更好的相容性
+        // 建立錄音檔案的路徑，並傳給 Service
         audioFile = File(cacheDir, "input.m4a")
-        recorder = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(this) else @Suppress("DEPRECATION") MediaRecorder()).apply {
-            setAudioSource(MediaRecorder.AudioSource.MIC)
-            setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            setOutputFile(audioFile!!.absolutePath)
-            setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-            try {
-                prepare()
-                start()
-                tvStatus.text = "錄音中..."
-            } catch (e: IOException) {
-                Log.e("MainActivity", "MediaRecorder prepare() failed", e)
-                Toast.makeText(this@MainActivity, "錄音裝置啟動失敗", Toast.LENGTH_SHORT).show()
-                updateState(AppState.ERROR)
-            }
+
+        // 透過 Intent 向 Service 發送開始錄音的指令
+        val serviceIntent = Intent(this, ScreenCaptureService::class.java).apply {
+            action = ScreenCaptureService.ACTION_START_RECORDING // 【重要】需要在 Service 中定義這個新的 Action
+            putExtra(ScreenCaptureService.EXTRA_AUDIO_PATH, audioFile!!.absolutePath)
         }
+
+        // 必須使用 startForegroundService
+        ContextCompat.startForegroundService(this, serviceIntent)
+
+        // 更新 UI 狀態
+        updateState(AppState.RECORDING)
     }
 
+    // stopRecording 也是發送指令
     private fun stopRecording() {
-        // 由於 recorder 可能在 startRecording 的 catch 區塊中未被初始化，增加 null 檢查
-        recorder?.let {
-            try {
-                it.stop()
-                it.release()
-            } catch (e: IllegalStateException) {
-                Log.e("MainActivity", "MediaRecorder stop failed", e)
-            }
+        val serviceIntent = Intent(this, ScreenCaptureService::class.java).apply {
+            action = ScreenCaptureService.ACTION_STOP_RECORDING // 【重要】需要在 Service 中定義這個新的 Action
         }
-        recorder = null
+        ContextCompat.startForegroundService(this, serviceIntent)
+
         tvStatus.text = "錄音結束"
     }
 
@@ -405,7 +399,6 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
         unregisterReceiver(serviceResultReceiver)
         unregisterReceiver(sessionToggleReceiver)
-        recorder?.release()
         player?.release()
         stopScreenCaptureService()
     }

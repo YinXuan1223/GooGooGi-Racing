@@ -8,6 +8,7 @@ import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
+import android.media.MediaRecorder
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
@@ -40,15 +41,23 @@ class ScreenCaptureService : Service() {
         .writeTimeout(100, TimeUnit.SECONDS)
         .build()
 
+    private val monitoringHandler = Handler(Looper.getMainLooper())
+    private var isMonitoring = false
+    private var initialAudioFile: File? = null // 用來儲存最初的音檔
+    private val MONITORING_INTERVAL_MS = 7000L
+
     // Variable to store the hash of the last successfully sent screen
     private var lastScreenHash: Int? = null
+    private var recorder: MediaRecorder? = null
 
     companion object {
         // Actions
         const val ACTION_SETUP = "ACTION_SETUP"
-        const val ACTION_CAPTURE_AND_SEND = "ACTION_CAPTURE_AND_SEND"
+        const val ACTION_START_MONITORING = "ACTION_START_MONITORING"
         const val ACTION_STOP_SERVICE = "ACTION_STOP_SERVICE"
         const val ACTION_RESULT = "ACTION_RESULT" // For broadcasting result to Activity
+        const val ACTION_START_RECORDING = "ACTION_START_RECORDING"
+        const val ACTION_STOP_RECORDING = "ACTION_STOP_RECORDING"
 
         // Extras
         const val EXTRA_RESULT_CODE = "RESULT_CODE"
@@ -79,17 +88,64 @@ class ScreenCaptureService : Service() {
                     setupVirtualDisplay()
                 }
             }
-            ACTION_CAPTURE_AND_SEND -> {
+            ACTION_START_MONITORING -> {
                 val audioPath = intent.getStringExtra(EXTRA_AUDIO_PATH)
                 if (audioPath != null) {
-                    captureAndSend(File(audioPath))
+                    // 1. 停止任何可能正在運行的舊監控，確保每次都是新的開始
+                    stopMonitoring()
+
+                    // 2. 儲存這次任務要重複使用的音檔
+                    initialAudioFile = File(audioPath)
+
+                    // 3. 立即執行第一次的畫面擷取與傳送
+                    captureAndProcessScreen()
                 }
             }
-            ACTION_STOP_SERVICE -> stopSelf()
+            ACTION_STOP_SERVICE -> {
+                stopMonitoring() // 確保在服務停止時，監控也停止
+                stopSelf()
+            }
+            ACTION_START_RECORDING -> {
+                val audioPath = intent.getStringExtra(EXTRA_AUDIO_PATH)
+                if (audioPath != null) {
+                    startRecording(File(audioPath))
+                }
+            }
+            ACTION_STOP_RECORDING -> {
+                stopRecording()
+            }
         }
         return START_NOT_STICKY
     }
 
+    // 這個 Runnable 是定時器的本體，會被重複執行
+    private val monitoringRunnable = object : Runnable {
+        override fun run() {
+            if (isMonitoring) {
+                captureAndProcessScreen() // 執行檢查
+                monitoringHandler.postDelayed(this, MONITORING_INTERVAL_MS) // 安排下一次
+            }
+        }
+    }
+
+    // 啟動監控的函式
+    private fun startMonitoring() {
+        if (!isMonitoring) {
+            isMonitoring = true
+            Log.d("ScreenCaptureService", "螢幕監控已啟動。")
+            // 使用 post 而非 postDelayed，讓監控在網路回應後能立即開始下一次輪詢
+            monitoringHandler.post(monitoringRunnable)
+        }
+    }
+
+    // 停止監控的函式
+    private fun stopMonitoring() {
+        if (isMonitoring) {
+            isMonitoring = false
+            monitoringHandler.removeCallbacks(monitoringRunnable)
+            Log.d("ScreenCaptureService", "螢幕監控已停止。")
+        }
+    }
     private fun setupMediaProjection(resultCode: Int, resultData: Intent) {
         mediaProjection = mediaProjectionManager.getMediaProjection(resultCode, resultData)
         mediaProjection?.registerCallback(object : MediaProjection.Callback() {
@@ -113,12 +169,9 @@ class ScreenCaptureService : Service() {
         )
     }
 
-    private fun captureAndSend(audioFile: File) {
-        val image = imageReader?.acquireLatestImage()
-        if (image == null) {
-            sendError("無法擷取螢幕畫面")
-            return
-        }
+    private fun captureAndProcessScreen(){
+        val audioFile = initialAudioFile ?: return
+        val image = imageReader?.acquireLatestImage() ?: return
 
         var finalBitmap: Bitmap? = null
         try {
@@ -148,7 +201,6 @@ class ScreenCaptureService : Service() {
             } else {
                 Log.d("ScreenChange", "⚪️ [NO CHANGE] 畫面無變化，本次不執行上傳。")
                 // Inform the calling activity that no action was taken.
-                sendError("畫面無變化")
                 finalBitmap.recycle() // Recycle bitmap since it's not being used.
             }
             // --- End of Integrated Logic ---
@@ -221,7 +273,7 @@ class ScreenCaptureService : Service() {
             .build()
 
         val request = Request.Builder()
-            .url("http://10.0.2.2:5000/img")
+            .url("http://192.168.50.184:5000/img")
             .post(requestBody)
             .build()
 
@@ -229,6 +281,7 @@ class ScreenCaptureService : Service() {
             override fun onFailure(call: Call, e: IOException) {
                 Log.e("ScreenCaptureService", "API請求失敗", e)
                 sendError("API請求失敗: ${e.message}")
+                stopMonitoring()
             }
 
             override fun onResponse(call: Call, response: Response) {
@@ -240,6 +293,14 @@ class ScreenCaptureService : Service() {
                         val status = json.getString("ai_response")
                         val audioBase64 = json.getString("audio_base64")
                         sendSuccess(status, audioBase64, missionAchieved)
+                        if (missionAchieved) {
+                            Log.d("ScreenCaptureService", "任務完成，停止監控。")
+                            stopMonitoring()
+                        } else {
+                            Log.d("ScreenCaptureService", "任務未完成，準備下一次監控。")
+                            // 在這裡啟動監控，讓它在收到回應後才開始等下一個變化
+                            startMonitoring()
+                        }
                     } catch (e: Exception) {
                         Log.e("ScreenCaptureService", "解析JSON回應時出錯", e)
                         sendError("解析JSON回應時出錯")
@@ -279,6 +340,43 @@ class ScreenCaptureService : Service() {
             .setSmallIcon(R.mipmap.ic_launcher)
             .build()
         startForeground(NOTIFICATION_ID, notification)
+    }
+
+    private fun startRecording(audioFile: File) {
+        // 確保服務是前景服務，這是能在背景錄音的關鍵
+        startForegroundWithNotification() // 記得更新通知文字
+
+        recorder = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(this) else @Suppress("DEPRECATION") MediaRecorder()).apply {
+            setAudioSource(MediaRecorder.AudioSource.MIC)
+            setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            setOutputFile(audioFile.absolutePath)
+            setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            try {
+                prepare()
+                start()
+                // 可以透過廣播通知 Activity 錄音已成功開始
+                Log.d("ScreenCaptureService", "錄音已開始")
+            } catch (e: IOException) {
+                Log.e("ScreenCaptureService", "MediaRecorder prepare() failed", e)
+                // 透過廣播通知 Activity 發生錯誤
+                sendError("錄音裝置啟動失敗")
+                stopSelf() // 啟動失敗就停止服務
+            }
+        }
+    }
+
+    private fun stopRecording() {
+        recorder?.let {
+            try {
+                it.stop()
+                it.release()
+                Log.d("ScreenCaptureService", "錄音已停止")
+            } catch (e: IllegalStateException) {
+                Log.e("ScreenCaptureService", "MediaRecorder stop failed", e)
+            }
+        }
+        recorder = null
+        // 這裡可以選擇是否更新通知，或等待下一個指令
     }
 
     override fun onDestroy() {
