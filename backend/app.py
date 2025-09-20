@@ -1,8 +1,16 @@
 from flask import Flask, request, jsonify
 
+from flask import Flask, request, jsonify
+
 import os
 import json
+import json
 from dotenv import load_dotenv
+
+import base64
+import tempfile
+from gtts import gTTS
+from pydub import AudioSegment
 
 import base64
 import tempfile
@@ -15,9 +23,17 @@ from PIL import Image
 from google import genai
 from google.genai import types
 
+from PIL import Image
+
+from google import genai
+from google.genai import types
+
+load_dotenv()
+app = Flask(__name__)
 load_dotenv()
 app = Flask(__name__)
 
+client = genai.Client(api_key=os.getenv("GENAI_API_KEY"))
 client = genai.Client(api_key=os.getenv("GENAI_API_KEY"))
 
 @app.route("/img", methods=["POST"])
@@ -31,7 +47,10 @@ def img_server():
         # 接收圖片
         image_file = request.files.get("image")
         if not image_file:
+            print("no image")
             return jsonify({"error": "未找到圖片"}), 400
+        else :
+            print("image received")
         image = Image.open(image_file.stream)
 
         # 暫存音檔
@@ -49,6 +68,8 @@ def img_server():
         with sr.AudioFile(wav_path) as source:
             audio = r.record(source)
             text = r.recognize_google(audio, language="zh-TW")
+
+        print(f"text: {text}")
 
         # Prompt
         user_prompt = {
@@ -87,13 +108,19 @@ def img_server():
 
         # 文字轉語音
         tts = gTTS(ai_response, lang="zh-TW")
-        out_file_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-        tts.save(out_file_path)
+        
+        # Use context manager for better file handling
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as out_file_path:
+            temp_audio_path = out_file_path.name
+        
+        # Save TTS to the temporary file
+        tts.save(temp_audio_path)
 
         # 語音轉 Base64
-        with open(out_file_path, "rb") as audio_file:
+        with open(temp_audio_path, "rb") as audio_file:
             encoded_audio = base64.b64encode(audio_file.read()).decode("utf-8")
 
+        print(f"mission achieved? {mission_achieved}, ai response: {ai_response}")
         return jsonify({
             "mission_achieved": mission_achieved,
             "ai_response": ai_response,
@@ -102,14 +129,34 @@ def img_server():
 
     except sr.UnknownValueError:
         return jsonify({"error": "Google 語音辨識服務無法辨識語音"}), 500
+        return jsonify({"error": "Google 語音辨識服務無法辨識語音"}), 500
     except sr.RequestError as e:
         return jsonify({"error": f"無法從 Google 語音辨識服務取得結果; {e}"}), 500
     except Exception as e:
         return jsonify({"error": f"處理請求時發生錯誤: {str(e)}"}), 500
     finally:
-        for path in [locals().get("input_path"), locals().get("wav_path"), locals().get("out_file_path", None) and locals()["out_file_path"].name]:
+        # Clean up temporary files
+        cleanup_files = []
+        
+        # Add files to cleanup list if they exist in locals
+        if 'input_path' in locals():
+            cleanup_files.append(locals()['input_path'])
+        if 'wav_path' in locals():
+            cleanup_files.append(locals()['wav_path'])
+        if 'temp_audio_path' in locals():
+            cleanup_files.append(locals()['temp_audio_path'])
+        
+        # Clean up each file with error handling
+        for path in cleanup_files:
             if path and os.path.exists(path):
-                os.remove(path)
+                try:
+                    os.remove(path)
+                except PermissionError:
+                    # File might still be in use, try to delete later
+                    print(f"Warning: Could not delete {path} - file may be in use")
+                except Exception as e:
+                    print(f"Warning: Error deleting {path}: {e}")
 
 if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
     app.run(host="0.0.0.0", port=5000, debug=True)
