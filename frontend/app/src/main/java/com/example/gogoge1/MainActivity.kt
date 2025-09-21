@@ -181,7 +181,7 @@ class MainActivity : AppCompatActivity() {
             }
             AppState.RESPONSE -> {
                 btnControlSession.text = "開始新對話" // 播放完畢後，可以再次錄音
-                btnControlSession.isEnabled = false
+                btnControlSession.isEnabled = true
             }
             AppState.SUCCESS -> {
                 tvStatus.append("\n✨ 任務完成！")
@@ -358,7 +358,13 @@ class MainActivity : AppCompatActivity() {
                 setOnCompletionListener {
                     tvStatus.text = "播放完畢"
                     it.release()
+                    player = null
                     tempMp3.delete()
+                    Log.d("MainActivity", "音檔播放完畢，發送確認訊號至 Service。")
+                    Intent(this@MainActivity, ScreenCaptureService::class.java).also { intent ->
+                        intent.action = ScreenCaptureService.ACTION_CONFIRM_SEND
+                        startService(intent)
+                    }
                     // 播放完畢後，如果任務還沒成功，可以停留在 RESPONSE 狀態
                     // 如果任務已成功，則已經在 SUCCESS 狀態
                 }

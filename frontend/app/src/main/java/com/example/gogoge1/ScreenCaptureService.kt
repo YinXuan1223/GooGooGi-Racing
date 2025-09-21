@@ -49,6 +49,7 @@ class ScreenCaptureService : Service() {
     // Variable to store the hash of the last successfully sent screen
     private var lastScreenHash: Int? = null
     private var recorder: MediaRecorder? = null
+    private var sendConfirm = false
 
     companion object {
         // Actions
@@ -58,6 +59,7 @@ class ScreenCaptureService : Service() {
         const val ACTION_RESULT = "ACTION_RESULT" // For broadcasting result to Activity
         const val ACTION_START_RECORDING = "ACTION_START_RECORDING"
         const val ACTION_STOP_RECORDING = "ACTION_STOP_RECORDING"
+        const val ACTION_CONFIRM_SEND = "ACTION_CONFIRM_SEND"
 
         // Extras
         const val EXTRA_RESULT_CODE = "RESULT_CODE"
@@ -113,6 +115,10 @@ class ScreenCaptureService : Service() {
             }
             ACTION_STOP_RECORDING -> {
                 stopRecording()
+            }
+            ACTION_CONFIRM_SEND -> {
+                Log.d("ScreenCaptureService", "✅ 確認訊號已收到，允許下一次傳送。")
+                sendConfirm = true
             }
         }
         return START_NOT_STICKY
@@ -192,19 +198,22 @@ class ScreenCaptureService : Service() {
             // --- Start of Integrated Logic ---
             val newHash = generateScreenHash(finalBitmap)
 
-            if (lastScreenHash == null || newHash != lastScreenHash) {
-                Log.d("ScreenChange", "✅ [CHANGE DETECTED] 畫面已發生變更！準備上傳...")
-                // The hash is different, so we send the data to the server.
+            if (lastScreenHash == null || (newHash != lastScreenHash && sendConfirm)) {
+                if (lastScreenHash == null) {
+                    Log.d("ScreenChange", "✅ [INITIAL CAPTURE] 首次擷取，直接上傳...")
+                } else {
+                    Log.d("ScreenChange", "✅ [CHANGE DETECTED & CONFIRMED] 畫面已變更且收到確認，準備上傳...")
+                }
                 sendToServer(audioFile, finalBitmap)
-                // We update the hash *only after* deciding to send.
                 lastScreenHash = newHash
             } else {
-                Log.d("ScreenChange", "⚪️ [NO CHANGE] 畫面無變化，本次不執行上傳。")
-                // Inform the calling activity that no action was taken.
-                finalBitmap.recycle() // Recycle bitmap since it's not being used.
+                if (newHash != lastScreenHash && !sendConfirm) {
+                    Log.d("ScreenChange", "⚠️ [CHANGE DETECTED, NOT CONFIRMED] 畫面已變更，但尚未收到音檔播放完成的確認，本次不執行上傳。")
+                } else {
+                    Log.d("ScreenChange", "⚪️ [NO CHANGE] 畫面無變化，本次不執行上傳。")
+                }
+                finalBitmap.recycle()
             }
-            // --- End of Integrated Logic ---
-
         } catch (e: Exception) {
             Log.e("ScreenCaptureService", "擷取或處理圖片時出錯", e)
             sendError("擷取或處理圖片時出錯")
@@ -265,15 +274,16 @@ class ScreenCaptureService : Service() {
         bitmap.compress(Bitmap.CompressFormat.PNG, 90, stream)
         val bitmapBytes = stream.toByteArray()
         bitmap.recycle() // Recycle the bitmap after it has been converted to a byte array
+        sendConfirm = false
 
         val requestBody = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
-            .addFormDataPart("file", audioFile.name, audioFile.asRequestBody("audio/3gpp".toMediaType()))
+            .addFormDataPart("file", audioFile.name, audioFile.asRequestBody("audio/m4a".toMediaType()))
             .addFormDataPart("image", "screenshot.png", bitmapBytes.toRequestBody("image/png".toMediaType()))
             .build()
 
         val request = Request.Builder()
-            .url("http://10.0.2.2:5000/img")
+            .url("http://192.168.1.202:5000/img")
             .post(requestBody)
             .build()
 
