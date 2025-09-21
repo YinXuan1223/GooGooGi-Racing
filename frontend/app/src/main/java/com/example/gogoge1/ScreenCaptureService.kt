@@ -283,7 +283,7 @@ class ScreenCaptureService : Service() {
             .build()
 
         val request = Request.Builder()
-            .url("http://192.168.1.202:5000/img")
+            .url("http://192.168.0.144:5000/img")
             .post(requestBody)
             .build()
 
