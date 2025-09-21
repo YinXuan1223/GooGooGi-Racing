@@ -13,6 +13,8 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import androidx.core.content.ContextCompat
+import android.widget.ImageView
+import com.bumptech.glide.Glide
 
 class FloatingService : Service() {
 
@@ -22,9 +24,9 @@ class FloatingService : Service() {
 
     // 定義狀態對應的圖片
     private val idleImage = R.drawable.idle
-    private val recordingImage = R.drawable.recording
-    private val thinkingImage = R.drawable.thinking
-    private val responseImage = R.drawable.answer
+    private val recordingImage = R.raw.recording
+    private val thinkingImage = R.raw.thinking
+    private val responseImage = R.raw.answer
     private val successImage = R.drawable.success
     private val errorImage = R.drawable.error
     // 【附註】請確保 R.drawable.recording 和 R.drawable.thinking 圖檔已存在於您的專案中
@@ -78,7 +80,7 @@ class FloatingService : Service() {
     }
 
     private fun createFloatingView(): View {
-        return View(this).apply {
+        return ImageView(this).apply {
             background = ContextCompat.getDrawable(this@FloatingService, idleImage)
 
             // --- 拖曳與點擊邏輯 (保持不變) ---
@@ -134,7 +136,23 @@ class FloatingService : Service() {
             AppState.SUCCESS -> successImage
             AppState.ERROR -> errorImage
         }
-        floatingView.background = ContextCompat.getDrawable(this, newIconRes)
+//        floatingView.background = ContextCompat.getDrawable(this, newIconRes)
+
+
+            val typeName = resources.getResourceTypeName(newIconRes)
+
+            if (typeName == "raw") {
+                // raw → 預設當成GIF來播
+                Glide.with(this@FloatingService)
+                    .asGif()
+                    .load(newIconRes)
+                    .into(floatingView as ImageView)
+            } else {
+                // drawable → 靜態圖
+                Glide.with(this@FloatingService)
+                    .load(newIconRes)
+                    .into(floatingView as ImageView)
+            }
     }
 
     override fun onDestroy() {

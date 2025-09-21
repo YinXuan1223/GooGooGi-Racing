@@ -324,7 +324,7 @@ class MainActivity : AppCompatActivity() {
     // stopRecording 也是發送指令
     private fun stopRecording() {
         val serviceIntent = Intent(this, ScreenCaptureService::class.java).apply {
-            action = ScreenCaptureService.ACTION_STOP_RECORDING // 【重要】需要在 Service 中定義這個新的 Action
+            action = ScreenCaptureService.ACTION_STOP_RECORDING
         }
         ContextCompat.startForegroundService(this, serviceIntent)
 
